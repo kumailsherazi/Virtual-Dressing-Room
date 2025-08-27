@@ -11,15 +11,35 @@ PHOTOS = {i: [] for i in range(10)}
 
 def initialize_images_and_photos(file_path):
     global IMAGES, PHOTOS
-    idx_str_l = file_path.split('/')
-    idx_str = idx_str_l[-1]
-    idx = int(''.join(filter(str.isdigit, idx_str)))
-    idx = (idx // 10) % 10
-    if os.path.isfile(file_path):
+    # Convert path to use forward slashes for consistency
+    file_path = file_path.replace('\\', '/')
+    # Extract filename from path
+    filename = os.path.basename(file_path)
+    # Try to extract index from filename (e.g., 'Hat1.png' -> 1)
+    try:
+        idx = int(''.join(filter(str.isdigit, filename)))
+        idx = (idx // 10) % 10
+        
+        # Check if file exists, if not try to find it in static/images
+        if not os.path.isfile(file_path):
+            # Try to find the file in static/images
+            static_path = os.path.join('static', 'images', filename).replace('\\', '/')
+            if os.path.isfile(static_path):
+                file_path = static_path
+            else:
+                print(f"Warning: Could not find file: {file_path}")
+                return
+                
+        # Read and process the image
         sprite_image = cv2.imread(file_path, -1)
-        IMAGES[idx].append(sprite_image)
-        photo = cv2.resize(sprite_image, (150, 100))
-        PHOTOS[idx].append(photo) if idx in PHOTOS else PHOTOS.update({idx: [photo]})
+        if sprite_image is not None:
+            IMAGES[idx].append(sprite_image)
+            photo = cv2.resize(sprite_image, (150, 100))
+            PHOTOS[idx].append(photo) if idx in PHOTOS else PHOTOS.update({idx: [photo]})
+        else:
+            print(f"Warning: Could not read image: {file_path}")
+    except Exception as e:
+        print(f"Error processing {file_path}: {str(e)}")
 
 def put_sprite(num, k):
     global SPRITES, ACTIVE_IMAGES
@@ -108,6 +128,26 @@ def process_frame(frame, file_path):
         nparr = np.frombuffer(frame, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     
+    # Ensure file_path is a string and handle path formatting
+    if not isinstance(file_path, str):
+        print("Error: file_path must be a string")
+        return None
+        
+    # Convert path to use forward slashes for consistency
+    file_path = file_path.replace('\\', '/')
+    
+    # If the file doesn't exist, try to find it in static/images
+    if not os.path.isfile(file_path):
+        # Extract filename from path
+        filename = os.path.basename(file_path)
+        # Try to find the file in static/images
+        static_path = os.path.join('static', 'images', filename).replace('\\', '/')
+        if os.path.isfile(static_path):
+            file_path = static_path
+        else:
+            print(f"Error: Could not find file: {file_path}")
+            return None
+    
     if frame is None or not hasattr(frame, 'shape'):
         print("Invalid frame")
         return None
@@ -115,8 +155,23 @@ def process_frame(frame, file_path):
     initialize_images_and_photos(file_path)
 
     # Use OpenCV's built-in face detection instead of dlib
-    cascade_path = os.path.join('data', 'data', 'haarcascade_frontalface_default.xml')
-    face_cascade = cv2.CascadeClassifier(cascade_path)
+    # Try to find the cascade file in the data directory
+    cascade_paths = [
+        os.path.join('data', 'data', 'haarcascade_frontalface_default.xml'),
+        os.path.join('data', 'haarcascade_frontalface_default.xml'),
+        'haarcascade_frontalface_default.xml'
+    ]
+    
+    face_cascade = None
+    for path in cascade_paths:
+        if os.path.isfile(path):
+            face_cascade = cv2.CascadeClassifier(path)
+            if not face_cascade.empty():
+                break
+    
+    if face_cascade is None or face_cascade.empty():
+        print("Error: Could not load face detection cascade.")
+        return frame
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(gray, 1.1, 4)
     

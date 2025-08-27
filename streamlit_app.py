@@ -283,6 +283,25 @@ elif st.session_state.page == 'tryon':
                 image = Image.open(camera_input)
                 frame = np.array(image)
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                
+                # Get selected item or default
+                selected_item = st.session_state.get('selected_item', 'static/images/Necklace11.png')
+                
+                # Process the frame with virtual try-on
+                try:
+                    processed_frame = virtual_trial.process_frame(frame, selected_item)
+                    
+                    if processed_frame is not None:
+                        # Convert back to RGB for display
+                        processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
+                        st.image(processed_frame_rgb, caption="Virtual Try-On Result", use_container_width=True)
+                    else:
+                        st.image(frame, caption="Original Photo", use_container_width=True)
+                        st.warning("No face detected. Please ensure your face is clearly visible in the photo.")
+                except Exception as e:
+                    st.error(f"Error processing image: {str(e)}")
+                    st.image(frame, caption="Original Photo", use_column_width=True)
+                    
         except Exception as e:
             st.error("Error accessing webcam. Please ensure your camera is connected and permissions are granted.")
             st.info("As an alternative, you can upload an image below.")
@@ -291,26 +310,24 @@ elif st.session_state.page == 'tryon':
                 image = Image.open(uploaded_file)
                 frame = np.array(image)
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            else:
-                frame = None
-            
-            # Get selected item or default
-            selected_item = st.session_state.get('selected_item', 'static/images/Necklace11.png')
-            
-            # Process the frame with virtual try-on
-            try:
-                processed_frame = virtual_trial.process_frame(frame, selected_item)
                 
-                if processed_frame is not None:
-                    # Convert back to RGB for display
-                    processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
-                    st.image(processed_frame_rgb, caption="Virtual Try-On Result", use_container_width=True)
-                else:
-                    st.image(frame, caption="Original Photo", use_container_width=True)
-                    st.warning("No face detected. Please ensure your face is clearly visible in the photo.")
-            except Exception as e:
-                st.error(f"Error processing image: {str(e)}")
-                st.image(frame, caption="Original Photo", use_column_width=True)
+                # Get selected item or default
+                selected_item = st.session_state.get('selected_item', 'static/images/Necklace11.png')
+                
+                # Process the frame with virtual try-on
+                try:
+                    processed_frame = virtual_trial.process_frame(frame, selected_item)
+                    
+                    if processed_frame is not None:
+                        # Convert back to RGB for display
+                        processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
+                        st.image(processed_frame_rgb, caption="Virtual Try-On Result", use_container_width=True)
+                    else:
+                        st.image(frame, caption="Original Photo", use_container_width=True)
+                        st.warning("No face detected. Please ensure your face is clearly visible in the photo.")
+                except Exception as e:
+                    st.error(f"Error processing image: {str(e)}")
+                    st.image(frame, caption="Original Photo", use_column_width=True)
     
     with col2:
         st.subheader("👔 Select Item")

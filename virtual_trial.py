@@ -154,8 +154,15 @@ def process_frame(frame, file_path):
 
         #Tops
         if SPRITES[4]:
-            (x1,y1,w1,h1) = get_face_boundbox((x,y,w,h), 8)
-            apply_sprite(frame, IMAGES[4][ACTIVE_IMAGES[4]],w1+350,x1-230,y1+100, incl,  ontop = False)
+            # Adjust T-shirt positioning to better fit the body
+            tshirt_width = int(w * 2.5)  # Make T-shirt wider than the face
+            tshirt_x = x - (tshirt_width - w) // 2  # Center the T-shirt
+            tshirt_y = y + h  # Position below the face
+            
+            # Apply the T-shirt with adjusted size and position
+            apply_sprite(frame, IMAGES[4][ACTIVE_IMAGES[4]], 
+                        tshirt_width, tshirt_x, tshirt_y, 
+                        incl, ontop=False)
             sprite_applied = True
             
     return frame if sprite_applied else None

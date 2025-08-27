@@ -174,7 +174,7 @@ elif st.session_state.page == 'wardrobe':
         for i, (name, path) in enumerate(necklaces):
             with cols[i % 3]:
                 if os.path.exists(path):
-                    st.image(path, caption=name, use_column_width=True)
+                    st.image(path, caption=name, use_container_width=True)
                     if st.button(f"Try {name}", key=f"necklace_{i}"):
                         st.session_state.selected_item = path
                         st.session_state.page = 'tryon'
@@ -195,7 +195,7 @@ elif st.session_state.page == 'wardrobe':
         for i, (name, path) in enumerate(earrings):
             with cols[i % 3]:
                 if os.path.exists(path):
-                    st.image(path, caption=name, use_column_width=True)
+                    st.image(path, caption=name, use_container_width=True)
                     if st.button(f"Try {name}", key=f"earring_{i}"):
                         st.session_state.selected_item = path
                         st.session_state.page = 'tryon'
@@ -216,7 +216,7 @@ elif st.session_state.page == 'wardrobe':
         for i, (name, path) in enumerate(tiaras):
             with cols[i % 3]:
                 if os.path.exists(path):
-                    st.image(path, caption=name, use_column_width=True)
+                    st.image(path, caption=name, use_container_width=True)
                     if st.button(f"Try {name}", key=f"tiara_{i}"):
                         st.session_state.selected_item = path
                         st.session_state.page = 'tryon'
@@ -237,7 +237,7 @@ elif st.session_state.page == 'wardrobe':
         for i, (name, path) in enumerate(tshirts):
             with cols[i % 3]:
                 if os.path.exists(path):
-                    st.image(path, caption=name, use_column_width=True)
+                    st.image(path, caption=name, use_container_width=True)
                     if st.button(f"Try {name}", key=f"tshirt_{i}"):
                         st.session_state.selected_item = path
                         st.session_state.page = 'tryon'
@@ -258,7 +258,7 @@ elif st.session_state.page == 'wardrobe':
         for i, (name, path) in enumerate(goggles):
             with cols[i % 3]:
                 if os.path.exists(path):
-                    st.image(path, caption=name, use_column_width=True)
+                    st.image(path, caption=name, use_container_width=True)
                     if st.button(f"Try {name}", key=f"goggle_{i}"):
                         st.session_state.selected_item = path
                         st.session_state.page = 'tryon'
@@ -293,9 +293,9 @@ elif st.session_state.page == 'tryon':
                 if processed_frame is not None:
                     # Convert back to RGB for display
                     processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
-                    st.image(processed_frame_rgb, caption="Virtual Try-On Result", use_column_width=True)
+                    st.image(processed_frame_rgb, caption="Virtual Try-On Result", use_container_width=True)
                 else:
-                    st.image(frame, caption="Original Photo", use_column_width=True)
+                    st.image(frame, caption="Original Photo", use_container_width=True)
                     st.warning("No face detected. Please ensure your face is clearly visible in the photo.")
             except Exception as e:
                 st.error(f"Error processing image: {str(e)}")

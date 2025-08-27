@@ -115,7 +115,8 @@ def process_frame(frame, file_path):
     initialize_images_and_photos(file_path)
 
     # Use OpenCV's built-in face detection instead of dlib
-    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+    cascade_path = os.path.join('data', 'data', 'haarcascade_frontalface_default.xml')
+    face_cascade = cv2.CascadeClassifier(cascade_path)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     faces = face_cascade.detectMultiScale(gray, 1.1, 4)
     

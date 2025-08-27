@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 import os
 from PIL import Image
-import virtual_trial
+import tempfile
 
 # Page configuration
 st.set_page_config(
@@ -56,12 +56,190 @@ st.markdown("""
         color: #2d3748;
         margin: 1rem 0;
     }
+    
+    .stButton>button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # Initialize session state
 if 'page' not in st.session_state:
     st.session_state.page = 'home'
+if 'selected_item' not in st.session_state:
+    st.session_state.selected_item = None
+if 'processed_image' not in st.session_state:
+    st.session_state.processed_image = None
+
+# Load cascade classifier with error handling
+@st.cache_resource
+def load_cascade_classifier():
+    try:
+        # Try multiple possible paths for the cascade file
+        cascade_paths = [
+            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml',
+            'haarcascade_frontalface_default.xml',
+            './haarcascade_frontalface_default.xml'
+        ]
+        
+        face_cascade = None
+        for path in cascade_paths:
+            if os.path.exists(path):
+                face_cascade = cv2.CascadeClassifier(path)
+                if not face_cascade.empty():
+                    st.success(f"Loaded cascade from: {path}")
+                    return face_cascade
+        
+        # If not found, use alternative method
+        st.warning("Haar cascade file not found. Using alternative detection method.")
+        return None
+    except Exception as e:
+        st.error(f"Error loading cascade classifier: {str(e)}")
+        return None
+
+# Process frame for virtual try-on
+def process_frame(frame, item_path):
+    # Load cascade classifier
+    face_cascade = load_cascade_classifier()
+    
+    # Convert to grayscale for detection
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    
+    # Detect faces
+    faces = []
+    if face_cascade is not None and not face_cascade.empty():
+        faces = face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(30, 30)
+        )
+    else:
+        # Fallback: use a simple face detection approximation
+        height, width = gray.shape
+        faces = [(int(width/4), int(height/4), int(width/2), int(height/3))]
+    
+    if len(faces) == 0:
+        return None
+    
+    # Load the item image
+    if not os.path.exists(item_path):
+        st.error(f"Item image not found: {item_path}")
+        return frame
+    
+    item_img = cv2.imread(item_path, cv2.IMREAD_UNCHANGED)
+    if item_img is None:
+        st.error(f"Failed to load item image: {item_path}")
+        return frame
+    
+    # Process each detected face
+    result = frame.copy()
+    for (x, y, w, h) in faces:
+        # Determine placement based on item type
+        if "necklace" in item_path.lower():
+            # Place necklace below face
+            item_height = int(h * 0.5)
+            item_width = int(w * 1.5)
+            y_offset = int(y + h * 0.8)
+            x_offset = int(x - w * 0.25)
+        elif "earring" in item_path.lower():
+            # Place earrings on sides of face
+            item_height = int(h * 0.3)
+            item_width = int(w * 0.3)
+            # Left ear
+            y_offset_left = int(y + h * 0.3)
+            x_offset_left = int(x - w * 0.3)
+            # Right ear
+            y_offset_right = int(y + h * 0.3)
+            x_offset_right = int(x + w * 0.9)
+            
+            # Resize and place left earring
+            item_resized = cv2.resize(item_img, (item_width, item_height))
+            result = overlay_image(result, item_resized, x_offset_left, y_offset_left)
+            
+            # For right earring, flip horizontally
+            item_flipped = cv2.flip(item_resized, 1)
+            result = overlay_image(result, item_flipped, x_offset_right, y_offset_right)
+            
+            continue  # Skip the normal placement for earrings
+        elif "tiara" in item_path.lower() or "goggle" in item_path.lower() or "sunglass" in item_path.lower():
+            # Place on top of head
+            item_height = int(h * 0.4)
+            item_width = int(w * 1.2)
+            y_offset = int(y - h * 0.3)
+            x_offset = int(x - w * 0.1)
+        elif "top" in item_path.lower() or "shirt" in item_path.lower():
+            # Place on body
+            item_height = int(h * 1.5)
+            item_width = int(w * 1.5)
+            y_offset = int(y + h * 1.2)
+            x_offset = int(x - w * 0.25)
+        else:
+            # Default placement
+            item_height = int(h * 0.8)
+            item_width = int(w * 0.8)
+            y_offset = y
+            x_offset = x
+        
+        # Resize item
+        item_resized = cv2.resize(item_img, (item_width, item_height))
+        
+        # Overlay item on frame
+        result = overlay_image(result, item_resized, x_offset, y_offset)
+    
+    return result
+
+# Helper function to overlay images with transparency
+def overlay_image(background, overlay, x, y):
+    bg_height, bg_width = background.shape[:2]
+    
+    # Ensure coordinates are within bounds
+    x = max(0, min(x, bg_width - 1))
+    y = max(0, min(y, bg_height - 1))
+    
+    # Get dimensions of overlay image
+    h, w = overlay.shape[:2]
+    
+    # Calculate the region of interest
+    roi_x1 = x
+    roi_y1 = y
+    roi_x2 = min(x + w, bg_width)
+    roi_y2 = min(y + h, bg_height)
+    
+    # If the overlay goes beyond the background, adjust
+    if roi_x1 >= bg_width or roi_y1 >= bg_height or roi_x2 <= 0 or roi_y2 <= 0:
+        return background
+    
+    # Calculate the portion of the overlay to use
+    overlay_x1 = max(0, -x)
+    overlay_y1 = max(0, -y)
+    overlay_x2 = min(w, bg_width - x)
+    overlay_y2 = min(h, bg_height - y)
+    
+    # Extract the ROI from the background
+    roi = background[roi_y1:roi_y2, roi_x1:roi_x2]
+    
+    # Extract the relevant part of the overlay
+    overlay_portion = overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2]
+    
+    # Handle different overlay formats
+    if overlay_portion.shape[2] == 4:  # If overlay has alpha channel
+        # Split the overlay into color and alpha channels
+        overlay_colors = overlay_portion[:, :, :3]
+        alpha_mask = overlay_portion[:, :, 3:] / 255.0
+        
+        # Blend the images
+        roi = (overlay_colors * alpha_mask + roi * (1 - alpha_mask)).astype(np.uint8)
+    else:
+        # If no alpha channel, simply overlay
+        roi = overlay_portion
+    
+    # Put the modified ROI back into the background
+    background[roi_y1:roi_y2, roi_x1:roi_x2] = roi
+    
+    return background
 
 # Sidebar navigation
 st.sidebar.title("✨ Miroir")
@@ -156,6 +334,9 @@ elif st.session_state.page == 'wardrobe':
     st.markdown('<h1 class="main-header">Virtual Wardrobe</h1>', unsafe_allow_html=True)
     st.markdown('<p class="subtitle">Browse and select from our collection of virtual clothing items</p>', unsafe_allow_html=True)
     
+    # Create static directory if it doesn't exist
+    os.makedirs("static/images", exist_ok=True)
+    
     # Category tabs
     tab1, tab2, tab3, tab4, tab5 = st.tabs(["💎 Necklaces", "💍 Earrings", "👑 Tiaras", "👕 T-shirts", "🕶️ Goggles"])
     
@@ -173,12 +354,20 @@ elif st.session_state.page == 'wardrobe':
         
         for i, (name, path) in enumerate(necklaces):
             with cols[i % 3]:
-                if os.path.exists(path):
+                # Create placeholder if image doesn't exist
+                if not os.path.exists(path):
+                    # Create a placeholder image
+                    placeholder = np.zeros((200, 200, 3), dtype=np.uint8)
+                    cv2.rectangle(placeholder, (50, 50), (150, 150), (0, 255, 255), -1)
+                    cv2.putText(placeholder, name, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                    st.image(placeholder, caption=name, use_container_width=True)
+                else:
                     st.image(path, caption=name, use_container_width=True)
-                    if st.button(f"Try {name}", key=f"necklace_{i}"):
-                        st.session_state.selected_item = path
-                        st.session_state.page = 'tryon'
-                        st.rerun()
+                
+                if st.button(f"Try {name}", key=f"necklace_{i}"):
+                    st.session_state.selected_item = path
+                    st.session_state.page = 'tryon'
+                    st.rerun()
     
     with tab2:
         st.markdown('<h2 class="category-header">Earrings</h2>', unsafe_allow_html=True)
@@ -194,12 +383,20 @@ elif st.session_state.page == 'wardrobe':
         
         for i, (name, path) in enumerate(earrings):
             with cols[i % 3]:
-                if os.path.exists(path):
+                # Create placeholder if image doesn't exist
+                if not os.path.exists(path):
+                    # Create a placeholder image
+                    placeholder = np.zeros((200, 200, 3), dtype=np.uint8)
+                    cv2.rectangle(placeholder, (50, 50), (150, 150), (255, 0, 255), -1)
+                    cv2.putText(placeholder, name, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                    st.image(placeholder, caption=name, use_container_width=True)
+                else:
                     st.image(path, caption=name, use_container_width=True)
-                    if st.button(f"Try {name}", key=f"earring_{i}"):
-                        st.session_state.selected_item = path
-                        st.session_state.page = 'tryon'
-                        st.rerun()
+                
+                if st.button(f"Try {name}", key=f"earring_{i}"):
+                    st.session_state.selected_item = path
+                    st.session_state.page = 'tryon'
+                    st.rerun()
     
     with tab3:
         st.markdown('<h2 class="category-header">Tiaras</h2>', unsafe_allow_html=True)
@@ -215,12 +412,20 @@ elif st.session_state.page == 'wardrobe':
         
         for i, (name, path) in enumerate(tiaras):
             with cols[i % 3]:
-                if os.path.exists(path):
+                # Create placeholder if image doesn't exist
+                if not os.path.exists(path):
+                    # Create a placeholder image
+                    placeholder = np.zeros((200, 200, 3), dtype=np.uint8)
+                    cv2.rectangle(placeholder, (50, 50), (150, 150), (255, 255, 0), -1)
+                    cv2.putText(placeholder, name, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                    st.image(placeholder, caption=name, use_container_width=True)
+                else:
                     st.image(path, caption=name, use_container_width=True)
-                    if st.button(f"Try {name}", key=f"tiara_{i}"):
-                        st.session_state.selected_item = path
-                        st.session_state.page = 'tryon'
-                        st.rerun()
+                
+                if st.button(f"Try {name}", key=f"tiara_{i}"):
+                    st.session_state.selected_item = path
+                    st.session_state.page = 'tryon'
+                    st.rerun()
     
     with tab4:
         st.markdown('<h2 class="category-header">T-shirts</h2>', unsafe_allow_html=True)
@@ -229,19 +434,27 @@ elif st.session_state.page == 'wardrobe':
             ("Orange T-Shirt", "static/images/Tops41.png"),
             ("Pink T-Shirt", "static/images/Tops42.png"),
             ("Orange T-Shirt", "static/images/Tops45.png"),
-            ("White T-Shirt", "static/images/Tops43.png"),  # Changed from Tops47.jpg to Tops43.png
+            ("White T-Shirt", "static/images/Tops43.png"),
             ("Black T-Shirt", "static/images/Tops48.png"),
             ("White and Black Full Sleeves", "static/images/Tops49.png"),
         ]
         
         for i, (name, path) in enumerate(tshirts):
             with cols[i % 3]:
-                if os.path.exists(path):
+                # Create placeholder if image doesn't exist
+                if not os.path.exists(path):
+                    # Create a placeholder image
+                    placeholder = np.zeros((200, 200, 3), dtype=np.uint8)
+                    cv2.rectangle(placeholder, (50, 50), (150, 150), (0, 0, 255), -1)
+                    cv2.putText(placeholder, name, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                    st.image(placeholder, caption=name, use_container_width=True)
+                else:
                     st.image(path, caption=name, use_container_width=True)
-                    if st.button(f"Try {name}", key=f"tshirt_{i}"):
-                        st.session_state.selected_item = path
-                        st.session_state.page = 'tryon'
-                        st.rerun()
+                
+                if st.button(f"Try {name}", key=f"tshirt_{i}"):
+                    st.session_state.selected_item = path
+                    st.session_state.page = 'tryon'
+                    st.rerun()
     
     with tab5:
         st.markdown('<h2 class="category-header">Goggles</h2>', unsafe_allow_html=True)
@@ -257,12 +470,20 @@ elif st.session_state.page == 'wardrobe':
         
         for i, (name, path) in enumerate(goggles):
             with cols[i % 3]:
-                if os.path.exists(path):
+                # Create placeholder if image doesn't exist
+                if not os.path.exists(path):
+                    # Create a placeholder image
+                    placeholder = np.zeros((200, 200, 3), dtype=np.uint8)
+                    cv2.rectangle(placeholder, (50, 50), (150, 150), (0, 255, 0), -1)
+                    cv2.putText(placeholder, name, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                    st.image(placeholder, caption=name, use_container_width=True)
+                else:
                     st.image(path, caption=name, use_container_width=True)
-                    if st.button(f"Try {name}", key=f"goggle_{i}"):
-                        st.session_state.selected_item = path
-                        st.session_state.page = 'tryon'
-                        st.rerun()
+                
+                if st.button(f"Try {name}", key=f"goggle_{i}"):
+                    st.session_state.selected_item = path
+                    st.session_state.page = 'tryon'
+                    st.rerun()
 
 # Try-On Page
 elif st.session_state.page == 'tryon':
@@ -289,18 +510,19 @@ elif st.session_state.page == 'tryon':
                 
                 # Process the frame with virtual try-on
                 try:
-                    processed_frame = virtual_trial.process_frame(frame, selected_item)
+                    processed_frame = process_frame(frame, selected_item)
                     
                     if processed_frame is not None:
                         # Convert back to RGB for display
                         processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
                         st.image(processed_frame_rgb, caption="Virtual Try-On Result", use_container_width=True)
+                        st.session_state.processed_image = processed_frame_rgb
                     else:
                         st.image(frame, caption="Original Photo", use_container_width=True)
                         st.warning("No face detected. Please ensure your face is clearly visible in the photo.")
                 except Exception as e:
                     st.error(f"Error processing image: {str(e)}")
-                    st.image(frame, caption="Original Photo", use_column_width=True)
+                    st.image(frame, caption="Original Photo", use_container_width=True)
                     
         except Exception as e:
             st.error("Error accessing webcam. Please ensure your camera is connected and permissions are granted.")
@@ -316,18 +538,19 @@ elif st.session_state.page == 'tryon':
                 
                 # Process the frame with virtual try-on
                 try:
-                    processed_frame = virtual_trial.process_frame(frame, selected_item)
+                    processed_frame = process_frame(frame, selected_item)
                     
                     if processed_frame is not None:
                         # Convert back to RGB for display
                         processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
                         st.image(processed_frame_rgb, caption="Virtual Try-On Result", use_container_width=True)
+                        st.session_state.processed_image = processed_frame_rgb
                     else:
                         st.image(frame, caption="Original Photo", use_container_width=True)
                         st.warning("No face detected. Please ensure your face is clearly visible in the photo.")
                 except Exception as e:
                     st.error(f"Error processing image: {str(e)}")
-                    st.image(frame, caption="Original Photo", use_column_width=True)
+                    st.image(frame, caption="Original Photo", use_container_width=True)
     
     with col2:
         st.subheader("👔 Select Item")
@@ -364,19 +587,54 @@ elif st.session_state.page == 'tryon':
         for category, items in item_categories.items():
             st.write(f"**{category}**")
             for name, path in items:
-                if os.path.exists(path):
-                    col_img, col_btn = st.columns([1, 2])
-                    with col_img:
-                        st.image(path, width=80)
-                    with col_btn:
-                        if st.button(f"Select {name}", key=f"select_{path}"):
-                            st.session_state.selected_item = path
-                            st.success(f"Selected: {name}")
+                col_img, col_btn = st.columns([1, 2])
+                with col_img:
+                    # Create placeholder if image doesn't exist
+                    if not os.path.exists(path):
+                        # Create a placeholder image
+                        placeholder = np.zeros((60, 60, 3), dtype=np.uint8)
+                        if "necklace" in category.lower():
+                            color = (0, 255, 255)
+                        elif "earring" in category.lower():
+                            color = (255, 0, 255)
+                        elif "tiara" in category.lower():
+                            color = (255, 255, 0)
+                        elif "goggle" in category.lower():
+                            color = (0, 255, 0)
+                        else:
+                            color = (0, 0, 255)
+                        cv2.rectangle(placeholder, (10, 10), (50, 50), color, -1)
+                        st.image(placeholder, width=60)
+                    else:
+                        st.image(path, width=60)
+                with col_btn:
+                    if st.button(f"Select {name}", key=f"select_{path}"):
+                        st.session_state.selected_item = path
+                        st.success(f"Selected: {name}")
         
         # Current selection
         if 'selected_item' in st.session_state:
             st.write("**Currently Selected:**")
             st.write(st.session_state.selected_item.split('/')[-1])
+        
+        # Download button for processed image
+        if st.session_state.processed_image is not None:
+            st.subheader("📥 Download Your Try-On")
+            # Convert to PIL Image for download
+            result_pil = Image.fromarray(st.session_state.processed_image)
+            
+            # Save to temporary file
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
+                result_pil.save(tmp_file.name)
+                
+                # Create download button
+                with open(tmp_file.name, "rb") as file:
+                    btn = st.download_button(
+                        label="Download Result",
+                        data=file,
+                        file_name="virtual_try_on_result.png",
+                        mime="image/png"
+                    )
 
 # About Page
 elif st.session_state.page == 'about':

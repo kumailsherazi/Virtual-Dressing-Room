@@ -11,14 +11,29 @@ PHOTOS = {i: [] for i in range(10)}
 
 def initialize_images_and_photos(file_path):
     global IMAGES, PHOTOS
+    
+    if not file_path:
+        print("Error: No file path provided")
+        return
+        
     # Convert path to use forward slashes for consistency
     file_path = file_path.replace('\\', '/')
+    
     # Extract filename from path
     filename = os.path.basename(file_path)
+    if not filename:
+        print(f"Error: Could not extract filename from path: {file_path}")
+        return
+    
     # Try to extract index from filename (e.g., 'Hat1.png' -> 1)
     try:
-        idx = int(''.join(filter(str.isdigit, filename)))
-        idx = (idx // 10) % 10
+        # Extract the first number found in the filename
+        numbers = [int(s) for s in filename if s.isdigit()]
+        if not numbers:
+            print(f"Warning: No numbers found in filename: {filename}")
+            idx = 0  # Default to 0 if no number found
+        else:
+            idx = numbers[0]  # Use the first number found
         
         # Check if file exists, if not try to find it in static/images
         if not os.path.isfile(file_path):
@@ -26,20 +41,39 @@ def initialize_images_and_photos(file_path):
             static_path = os.path.join('static', 'images', filename).replace('\\', '/')
             if os.path.isfile(static_path):
                 file_path = static_path
+                print(f"Found file at: {file_path}")
             else:
-                print(f"Warning: Could not find file: {file_path}")
-                return
+                # Try to find any file with a similar pattern
+                print(f"Warning: Could not find file: {filename}")
+                # Look for any file that starts with the same prefix (e.g., 'Hat')
+                prefix = ''.join([c for c in filename if not c.isdigit()]).split('.')[0]
+                if prefix:
+                    image_dir = os.path.join('static', 'images')
+                    if os.path.exists(image_dir):
+                        for f in os.listdir(image_dir):
+                            if f.startswith(prefix) and f.lower().endswith(('.png', '.jpg', '.jpeg')):
+                                file_path = os.path.join(image_dir, f).replace('\\', '/')
+                                print(f"Using alternative file: {file_path}")
+                                break
                 
+                if not os.path.isfile(file_path):
+                    print(f"Error: Could not find any suitable file for: {filename}")
+                    return
+        
         # Read and process the image
         sprite_image = cv2.imread(file_path, -1)
         if sprite_image is not None:
             IMAGES[idx].append(sprite_image)
             photo = cv2.resize(sprite_image, (150, 100))
             PHOTOS[idx].append(photo) if idx in PHOTOS else PHOTOS.update({idx: [photo]})
+            print(f"Successfully loaded image: {os.path.basename(file_path)}")
         else:
-            print(f"Warning: Could not read image: {file_path}")
+            print(f"Error: Could not read image: {file_path}")
+            
     except Exception as e:
         print(f"Error processing {file_path}: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 def put_sprite(num, k):
     global SPRITES, ACTIVE_IMAGES
@@ -124,29 +158,58 @@ def process_frame(frame, file_path):
     global SPRITES, ACTIVE_IMAGES, IMAGES
     sprite_applied = False
     
-    if isinstance(frame, bytes):
-        nparr = np.frombuffer(frame, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    
-    # Ensure file_path is a string and handle path formatting
-    if not isinstance(file_path, str):
-        print("Error: file_path must be a string")
+    if frame is None:
+        print("Error: No frame provided")
         return None
         
-    # Convert path to use forward slashes for consistency
-    file_path = file_path.replace('\\', '/')
+    if isinstance(frame, bytes):
+        try:
+            nparr = np.frombuffer(frame, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if frame is None:
+                print("Error: Could not decode frame data")
+                return None
+        except Exception as e:
+            print(f"Error processing frame data: {str(e)}")
+            return None
+    
+    # Ensure file_path is a string and handle path formatting
+    if not isinstance(file_path, str) or not file_path.strip():
+        print("Error: Invalid file path")
+        return frame  # Return original frame if no valid path provided
+    
+    # Clean up the path
+    file_path = file_path.strip().replace('\\', '/')
     
     # If the file doesn't exist, try to find it in static/images
     if not os.path.isfile(file_path):
         # Extract filename from path
         filename = os.path.basename(file_path)
+        if not filename:
+            print(f"Error: Could not extract filename from path: {file_path}")
+            return frame  # Return original frame if no valid filename
+            
         # Try to find the file in static/images
         static_path = os.path.join('static', 'images', filename).replace('\\', '/')
         if os.path.isfile(static_path):
             file_path = static_path
+            print(f"Found file at: {file_path}")
         else:
-            print(f"Error: Could not find file: {file_path}")
-            return None
+            # Try to find any file with a similar pattern
+            print(f"Warning: Could not find file: {filename}")
+            prefix = ''.join([c for c in filename if not c.isdigit()]).split('.')[0]
+            if prefix:
+                image_dir = os.path.join('static', 'images')
+                if os.path.exists(image_dir):
+                    for f in os.listdir(image_dir):
+                        if f.startswith(prefix) and f.lower().endswith(('.png', '.jpg', '.jpeg')):
+                            file_path = os.path.join(image_dir, f).replace('\\', '/')
+                            print(f"Using alternative file: {file_path}")
+                            break
+            
+            if not os.path.isfile(file_path):
+                print(f"Error: Could not find any suitable file for: {filename}")
+                return frame  # Return original frame if no file found
     
     if frame is None or not hasattr(frame, 'shape'):
         print("Invalid frame")

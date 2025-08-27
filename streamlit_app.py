@@ -274,14 +274,25 @@ elif st.session_state.page == 'tryon':
     with col1:
         st.subheader("📷 Camera Feed")
         
-        # Camera input
-        camera_input = st.camera_input("Take a photo to try on items")
-        
-        if camera_input is not None:
-            # Convert the uploaded image to OpenCV format
-            image = Image.open(camera_input)
-            frame = np.array(image)
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        # Camera input with error handling
+        try:
+            camera_input = st.camera_input("Take a photo to try on items")
+            
+            if camera_input is not None:
+                # Convert the uploaded image to OpenCV format
+                image = Image.open(camera_input)
+                frame = np.array(image)
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        except Exception as e:
+            st.error("Error accessing webcam. Please ensure your camera is connected and permissions are granted.")
+            st.info("As an alternative, you can upload an image below.")
+            uploaded_file = st.file_uploader("Or upload an image", type=["jpg", "jpeg", "png"])
+            if uploaded_file is not None:
+                image = Image.open(uploaded_file)
+                frame = np.array(image)
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            else:
+                frame = None
             
             # Get selected item or default
             selected_item = st.session_state.get('selected_item', 'static/images/Necklace11.png')

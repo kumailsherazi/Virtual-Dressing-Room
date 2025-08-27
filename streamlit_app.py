@@ -229,7 +229,7 @@ elif st.session_state.page == 'wardrobe':
             ("Orange T-Shirt", "static/images/Tops41.png"),
             ("Pink T-Shirt", "static/images/Tops42.png"),
             ("Orange T-Shirt", "static/images/Tops45.png"),
-            ("White T-Shirt", "static/images/Tops47.jpg"),
+            ("White T-Shirt", "static/images/Tops43.png"),  # Changed from Tops47.jpg to Tops43.png
             ("Black T-Shirt", "static/images/Tops48.png"),
             ("White and Black Full Sleeves", "static/images/Tops49.png"),
         ]
@@ -353,6 +353,11 @@ elif st.session_state.page == 'tryon':
                 ("Goggles", "static/images/Sunglasses61.png"),
                 ("Sun Glasses", "static/images/Sunglasses62.png"),
                 ("Spectacles", "static/images/Sunglasses63.png"),
+            ],
+            "T-shirts": [
+                ("Orange T-Shirt", "static/images/Tops41.png"),
+                ("Pink T-Shirt", "static/images/Tops42.png"),
+                ("White T-Shirt", "static/images/Tops43.png")
             ]
         }
         

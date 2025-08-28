@@ -2,8 +2,11 @@ import streamlit as st
 import cv2
 import numpy as np
 import os
+import json
+from pathlib import Path
 from PIL import Image
 import tempfile
+from datetime import datetime
 
 # Page configuration
 st.set_page_config(
@@ -334,11 +337,63 @@ elif st.session_state.page == 'wardrobe':
     st.markdown('<h1 class="main-header">Virtual Wardrobe</h1>', unsafe_allow_html=True)
     st.markdown('<p class="subtitle">Browse and select from our collection of virtual clothing items</p>', unsafe_allow_html=True)
     
-    # Create static directory if it doesn't exist
-    os.makedirs("static/images", exist_ok=True)
+    # Create necessary directories if they don't exist
+    os.makedirs('static', exist_ok=True)
+    os.makedirs('static/uploads', exist_ok=True)
     
-    # Category tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["💎 Necklaces", "💍 Earrings", "👑 Tiaras", "👕 T-shirts", "🕶️ Goggles"])
+    # Initialize uploaded items file if it doesn't exist
+    uploaded_items_file = 'static/uploads/uploaded_items.json'
+    if not os.path.exists(uploaded_items_file):
+        with open(uploaded_items_file, 'w') as f:
+            json.dump([], f)
+    
+    # Load uploaded items
+    try:
+        with open(uploaded_items_file, 'r') as f:
+            uploaded_items = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        uploaded_items = []
+    
+    # File uploader in the sidebar
+    with st.sidebar.expander("📤 Upload New Item"):
+        with st.form("upload_form"):
+            st.write("### Add New Item to Wardrobe")
+            item_name = st.text_input("Item Name", "")
+            item_category = st.selectbox(
+                "Category",
+                ["Necklace", "Earring", "Tiara", "Hat", "Goggle", "T-shirt"]
+            )
+            uploaded_file = st.file_uploader("Choose an image...", type=["png", "jpg", "jpeg"])
+            
+            if st.form_submit_button("Upload Item"):
+                if uploaded_file is not None and item_name.strip() != "":
+                    # Save the uploaded file
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"{item_category.lower()}_{timestamp}_{uploaded_file.name}"
+                    filepath = os.path.join('static', 'uploads', filename)
+                    
+                    # Save the file
+                    with open(filepath, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    
+                    # Add to uploaded items
+                    new_item = {
+                        'name': item_name,
+                        'category': item_category,
+                        'path': filepath,
+                        'date_added': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    uploaded_items.append(new_item)
+                    
+                    # Save updated items list
+                    with open(uploaded_items_file, 'w') as f:
+                        json.dump(uploaded_items, f)
+                    
+                    st.success(f"Successfully uploaded {item_name} to your wardrobe!")
+                else:
+                    st.warning("Please provide both an item name and select an image file.")
+    
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["👗 Necklaces", "👂 Earrings", "👑 Hats & Tiaras", "👕 T-shirts", "📤 My Uploads"])
     
     with tab1:
         st.markdown('<h2 class="category-header">Necklaces</h2>', unsafe_allow_html=True)
@@ -346,7 +401,6 @@ elif st.session_state.page == 'wardrobe':
         necklaces = [
             ("Silver Necklace", "static/images/Necklace11.png"),
             ("Gold Necklace", "static/images/Necklace12.png"),
-            ("Silver Necklace", "static/images/Necklace14.png"),
             ("Thread Necklace", "static/images/Necklace15.png"),
             ("Gold Chain", "static/images/Necklace16.png"),
             ("Gold Chain", "static/images/Necklace17.png"),
@@ -399,7 +453,7 @@ elif st.session_state.page == 'wardrobe':
                     st.rerun()
     
     with tab3:
-        st.markdown('<h2 class="category-header">Tiaras</h2>', unsafe_allow_html=True)
+        st.markdown('<h2 class="category-header">Hats & Tiaras</h2>', unsafe_allow_html=True)
         cols = st.columns(3)
         tiaras = [
             ("Tiara", "static/images/Tiaras31.png"),
@@ -439,6 +493,11 @@ elif st.session_state.page == 'wardrobe':
             ("White and Black Full Sleeves", "static/images/Tops49.png"),
         ]
         
+        # Add uploaded T-shirts
+        for item in uploaded_items:
+            if item['category'].lower() == 't-shirt':
+                tshirts.append((item['name'], item['path']))
+                
         for i, (name, path) in enumerate(tshirts):
             with cols[i % 3]:
                 # Create placeholder if image doesn't exist
@@ -447,9 +506,9 @@ elif st.session_state.page == 'wardrobe':
                     placeholder = np.zeros((200, 200, 3), dtype=np.uint8)
                     cv2.rectangle(placeholder, (50, 50), (150, 150), (0, 0, 255), -1)
                     cv2.putText(placeholder, name, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                    st.image(placeholder, caption=name, use_container_width=True)
+                    st.image(placeholder, caption=name, use_column_width=True)
                 else:
-                    st.image(path, caption=name, use_container_width=True)
+                    st.image(path, caption=name, use_column_width=True)
                 
                 if st.button(f"Try {name}", key=f"tshirt_{i}"):
                     st.session_state.selected_item = path
@@ -457,6 +516,32 @@ elif st.session_state.page == 'wardrobe':
                     st.rerun()
     
     with tab5:
+        st.markdown('<h2 class="category-header">My Uploaded Items</h2>', unsafe_allow_html=True)
+        
+        if not uploaded_items:
+            st.info("You haven't uploaded any items yet. Use the upload form in the sidebar to add items to your wardrobe!")
+        else:
+            cols = st.columns(3)
+            for i, item in enumerate(uploaded_items):
+                with cols[i % 3]:
+                    try:
+                        if os.path.exists(item['path']):
+                            st.image(item['path'], use_column_width=True)
+                            st.write(f"**{item['name']}**")
+                            st.caption(f"Category: {item['category']}")
+                            st.caption(f"Added: {item['date_added']}")
+                            
+                            # Add try-on button
+                            if st.button(f"Try on {item['name']}", key=f"uploaded_{i}"):
+                                st.session_state.selected_item = item['path']
+                                st.session_state.page = 'tryon'
+                                st.rerun()
+                        else:
+                            st.warning(f"Could not find image: {item['path']}")
+                    except Exception as e:
+                        st.error(f"Error loading {item.get('name', 'item')}: {str(e)}")
+    
+    with tab6:
         st.markdown('<h2 class="category-header">Goggles</h2>', unsafe_allow_html=True)
         cols = st.columns(3)
         goggles = [

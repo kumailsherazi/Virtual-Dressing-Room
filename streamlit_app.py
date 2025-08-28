@@ -7,7 +7,7 @@ import tempfile
 
 # Page configuration
 st.set_page_config(
-    page_title="✨ Miroir - AI Virtual Try-On",
+    page_title="✨ VFIT - AI Virtual Try-On",
     page_icon="✨",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -242,7 +242,7 @@ def overlay_image(background, overlay, x, y):
     return background
 
 # Sidebar navigation
-st.sidebar.title("✨ Miroir")
+st.sidebar.title("✨ VFIT")
 page = st.sidebar.selectbox(
     "Navigate",
     ["🏠 Home", "👔 Wardrobe", "📸 Try-On", "ℹ️ About"]
@@ -260,7 +260,7 @@ elif page == "ℹ️ About":
 
 # Home Page
 if st.session_state.page == 'home':
-    st.markdown('<h1 class="main-header">Welcome to Miroir</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">Welcome to VFIT</h1>', unsafe_allow_html=True)
     st.markdown('<p class="subtitle">Your AI-powered virtual try-on experience. Upload wardrobe items and profile photos, then create stunning virtual try-ons with the power of AI.</p>', unsafe_allow_html=True)
     
     # Stats section
@@ -613,9 +613,11 @@ elif st.session_state.page == 'tryon':
                         st.success(f"Selected: {name}")
         
         # Current selection
-        if 'selected_item' in st.session_state:
+        if 'selected_item' in st.session_state and st.session_state.selected_item is not None:
             st.write("**Currently Selected:**")
             st.write(st.session_state.selected_item.split('/')[-1])
+        else:
+            st.write("**No item selected**")
         
         # Download button for processed image
         if st.session_state.processed_image is not None:
@@ -638,13 +640,13 @@ elif st.session_state.page == 'tryon':
 
 # About Page
 elif st.session_state.page == 'about':
-    st.markdown('<h1 class="main-header">About Miroir</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">About VFIT</h1>', unsafe_allow_html=True)
     st.markdown('<p class="subtitle">AI-powered virtual try-on technology</p>', unsafe_allow_html=True)
     
     st.markdown("""
-    ## ✨ What is Miroir?
+    ## ✨ What is VFIT?
     
-    Miroir is an advanced AI-powered virtual try-on application that allows you to see how different clothing items and accessories look on you without physically wearing them.
+    VFIT is an advanced AI-powered virtual try-on application that allows you to see how different clothing items and accessories look on you without physically wearing them.
     
     ## 🔧 Technology
     
@@ -674,6 +676,6 @@ elif st.session_state.page == 'about':
 # Footer
 st.markdown("---")
 st.markdown(
-    "<div style='text-align: center; color: #718096;'>✨ Miroir - AI Virtual Try-On Experience</div>",
+    "<div style='text-align: center; color: #718096;'>✨ VFIT - AI Virtual Try-On Experience</div>",
     unsafe_allow_html=True
 )

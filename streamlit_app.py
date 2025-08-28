@@ -323,14 +323,14 @@ if st.session_state.page == 'home':
     # CTA buttons
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🎯 Start with Try-On", type="primary", use_container_width=True):
+        if st.button("🎯 Start with Try-On", type="primary", use_container_width=True, key="home_tryon_btn"):
             st.session_state.page = 'tryon'
-            st.rerun()
+            st.experimental_rerun()
     
     with col2:
-        if st.button("👔 Browse Wardrobe", use_container_width=True):
+        if st.button("👔 Browse Wardrobe", use_container_width=True, key="home_wardrobe_btn"):
             st.session_state.page = 'wardrobe'
-            st.rerun()
+            st.experimental_rerun()
 
 # Wardrobe Page
 elif st.session_state.page == 'wardrobe':

@@ -330,7 +330,7 @@ if st.session_state.page == 'home':
     with col2:
         if st.button("👔 Browse Wardrobe", use_container_width=True, key="home_wardrobe_btn"):
             st.session_state.page = 'wardrobe'
-            st.experimental_rerun()
+            st.rerun()
 
 # Wardrobe Page
 elif st.session_state.page == 'wardrobe':
@@ -591,10 +591,11 @@ elif st.session_state.page == 'wardrobe':
                     st.image(placeholder, caption=name, use_container_width=True)
                 else:
                     st.image(path, caption=name, use_container_width=True)
-                
-                if st.button(f"Try {name}", key=f"goggle_try_{name}_{i}"):
+                    
+                unique_key = f"goggle_try_{name}_{i}_{uuid.uuid4().hex}"
+                if st.button(f"Try {name}", key=unique_key):
                     st.session_state.selected_item = path
-                    st.session_state.page = 'tryon'
+                    st.session_state.page = "tryon"
                     st.rerun()
 
 # Try-On Page

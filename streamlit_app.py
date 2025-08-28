@@ -510,7 +510,7 @@ elif st.session_state.page == 'wardrobe':
                     cv2.putText(placeholder, name, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                     st.image(placeholder, caption=name, use_column_width=True)
                 else:
-                    st.image(path, caption=name, use_column_width=True)
+                    st.image(path, caption=name, use_container_width=True)
                 
                 if st.button(f"Try {name}", key=f"tshirt_try_{name}_{i}"):
                     st.session_state.selected_item = path
@@ -539,7 +539,7 @@ elif st.session_state.page == 'wardrobe':
                     cv2.putText(placeholder, name, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                     st.image(placeholder, caption=name, use_container_width=True)
                 else:
-                    st.image(path, caption=name, use_column_width=True)
+                    st.image(path, caption=name, use_container_width=True)
                 
                 if st.button(f"Try {name}", key=f"goggle_try_{name}_{i}"):
                     st.session_state.selected_item = path

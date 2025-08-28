@@ -393,7 +393,7 @@ elif st.session_state.page == 'wardrobe':
                 else:
                     st.warning("Please provide both an item name and select an image file.")
     
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["👗 Necklaces", "👂 Earrings", "👑 Hats & Tiaras", "👕 T-shirts", "📤 My Uploads"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["👗 Necklaces", "👂 Earrings", "👑 Hats & Tiaras", "👕 T-shirts", "👓 Goggles", "📤 My Uploads"])
     
     with tab1:
         st.markdown('<h2 class="category-header">Necklaces</h2>', unsafe_allow_html=True)
@@ -516,6 +516,35 @@ elif st.session_state.page == 'wardrobe':
                     st.rerun()
     
     with tab5:
+        st.markdown('<h2 class="category-header">Goggles</h2>', unsafe_allow_html=True)
+        cols = st.columns(3)
+        goggles = [
+            ("Goggles", "static/images/Sunglasses61.png"),
+            ("Sun Glasses", "static/images/Sunglasses62.png"),
+            ("Spectacles", "static/images/Sunglasses63.png"),
+            ("Sun Glasses", "static/images/Sunglasses64.png"),
+            ("Shades", "static/images/Sunglasses65.png"),
+            ("Shades", "static/images/Sunglasses66.png"),
+        ]
+        
+        for i, (name, path) in enumerate(goggles):
+            with cols[i % 3]:
+                # Create placeholder if image doesn't exist
+                if not os.path.exists(path):
+                    # Create a placeholder image
+                    placeholder = np.zeros((200, 200, 3), dtype=np.uint8)
+                    cv2.rectangle(placeholder, (50, 50), (150, 150), (0, 0, 255), -1)
+                    cv2.putText(placeholder, name, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                    st.image(placeholder, caption=name, use_column_width=True)
+                else:
+                    st.image(path, caption=name, use_column_width=True)
+                
+                if st.button(f"Try {name}", key=f"goggle_{i}"):
+                    st.session_state.selected_item = path
+                    st.session_state.page = 'tryon'
+                    st.rerun()
+    
+    with tab6:
         st.markdown('<h2 class="category-header">My Uploaded Items</h2>', unsafe_allow_html=True)
         
         if not uploaded_items:
@@ -540,8 +569,6 @@ elif st.session_state.page == 'wardrobe':
                             st.warning(f"Could not find image: {item['path']}")
                     except Exception as e:
                         st.error(f"Error loading {item.get('name', 'item')}: {str(e)}")
-    
-    with tab6:
         st.markdown('<h2 class="category-header">Goggles</h2>', unsafe_allow_html=True)
         cols = st.columns(3)
         goggles = [

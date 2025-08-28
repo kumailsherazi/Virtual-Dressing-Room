@@ -7,6 +7,7 @@ from pathlib import Path
 from PIL import Image
 import tempfile
 from datetime import datetime
+import uuid
 
 # Page configuration
 st.set_page_config(

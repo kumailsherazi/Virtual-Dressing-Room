@@ -326,7 +326,8 @@ if st.session_state.page == 'home':
     with col1:
         if st.button("🎯 Start with Try-On", type="primary", use_container_width=True, key="home_tryon_btn"):
             st.session_state.page = 'tryon'
-            st.experimental_rerun()
+            st.rerun()
+
     
     with col2:
         if st.button("👔 Browse Wardrobe", use_container_width=True, key="home_wardrobe_btn"):

@@ -418,7 +418,7 @@ elif st.session_state.page == 'wardrobe':
                 else:
                     st.image(path, caption=name, use_container_width=True)
                 
-                if st.button(f"Try {name}", key=f"necklace_try_{i}"):
+                if st.button(f"Try {name}", key=f"necklace_try_{name}_{i}"):
                     st.session_state.selected_item = path
                     st.session_state.page = 'tryon'
                     st.rerun()
@@ -447,7 +447,7 @@ elif st.session_state.page == 'wardrobe':
                 else:
                     st.image(path, caption=name, use_container_width=True)
                 
-                if st.button(f"Try {name}", key=f"earring_try_{i}"):
+                if st.button(f"Try {name}", key=f"earring_try_{name}_{i}"):
                     st.session_state.selected_item = path
                     st.session_state.page = 'tryon'
                     st.rerun()
@@ -476,7 +476,7 @@ elif st.session_state.page == 'wardrobe':
                 else:
                     st.image(path, caption=name, use_container_width=True)
                 
-                if st.button(f"Try {name}", key=f"tiara_try_{i}"):
+                if st.button(f"Try {name}", key=f"tiara_try_{name}_{i}"):
                     st.session_state.selected_item = path
                     st.session_state.page = 'tryon'
                     st.rerun()
@@ -510,7 +510,7 @@ elif st.session_state.page == 'wardrobe':
                 else:
                     st.image(path, caption=name, use_column_width=True)
                 
-                if st.button(f"Try {name}", key=f"tshirt_try_{i}"):
+                if st.button(f"Try {name}", key=f"tshirt_try_{name}_{i}"):
                     st.session_state.selected_item = path
                     st.session_state.page = 'tryon'
                     st.rerun()
@@ -539,7 +539,7 @@ elif st.session_state.page == 'wardrobe':
                 else:
                     st.image(path, caption=name, use_column_width=True)
                 
-                if st.button(f"Try {name}", key=f"goggle_try_{i}"):
+                if st.button(f"Try {name}", key=f"goggle_try_{name}_{i}"):
                     st.session_state.selected_item = path
                     st.session_state.page = 'tryon'
                     st.rerun()
@@ -561,7 +561,7 @@ elif st.session_state.page == 'wardrobe':
                             st.caption(f"Added: {item['date_added']}")
                             
                             # Add try-on button
-                            if st.button(f"Try on {item['name']}", key=f"uploaded_try_{i}_{item['name'].replace(' ', '_')}"):
+                            if st.button(f"Try on {item['name']}", key=f"uploaded_try_{item['category']}_{i}_{item['name'].replace(' ', '_')}"):
                                 st.session_state.selected_item = item['path']
                                 st.session_state.page = 'tryon'
                                 st.rerun()
@@ -592,7 +592,7 @@ elif st.session_state.page == 'wardrobe':
                 else:
                     st.image(path, caption=name, use_container_width=True)
                 
-                if st.button(f"Try {name}", key=f"goggle_try_{i}"):
+                if st.button(f"Try {name}", key=f"goggle_try_{name}_{i}"):
                     st.session_state.selected_item = path
                     st.session_state.page = 'tryon'
                     st.rerun()

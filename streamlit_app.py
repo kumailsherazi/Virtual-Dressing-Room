@@ -3,41 +3,18 @@ import cv2
 import numpy as np
 import os
 import json
-import logging
 from pathlib import Path
 from PIL import Image
 import tempfile
 from datetime import datetime
 
-# Configure logging
-logging.getLogger('PIL').setLevel(logging.WARNING)
-logging.getLogger('PIL.PngImagePlugin').setLevel(logging.WARNING)
-logging.getLogger('PIL.TiffImagePlugin').setLevel(logging.WARNING)
-
-# Suppress OpenCV logging
-cv2.setLogLevel(0)
-
-# Configure Streamlit page
+# Page configuration
 st.set_page_config(
     page_title="✨ VFIT - AI Virtual Try-On",
     page_icon="✨",
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-# Hide Streamlit style elements
-hide_streamlit_style = """
-    <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    .stDeployButton {visibility: hidden;}
-    #root > div:nth-child(1) > div > div > div > div > section > div {padding-top: 2rem;}
-    </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
-
-# Disable warning for file_uploader
-st.set_option('deprecation.showfileUploaderEncoding', False)
 
 # Custom CSS for beautiful styling
 st.markdown("""

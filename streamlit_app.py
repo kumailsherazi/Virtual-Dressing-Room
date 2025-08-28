@@ -537,7 +537,7 @@ elif st.session_state.page == 'wardrobe':
                     placeholder = np.zeros((200, 200, 3), dtype=np.uint8)
                     cv2.rectangle(placeholder, (50, 50), (150, 150), (0, 0, 255), -1)
                     cv2.putText(placeholder, name, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                    st.image(placeholder, caption=name, use_column_width=True)
+                    st.image(placeholder, caption=name, use_container_width=True)
                 else:
                     st.image(path, caption=name, use_column_width=True)
                 
@@ -557,7 +557,7 @@ elif st.session_state.page == 'wardrobe':
                 with cols[i % 3]:
                     try:
                         if os.path.exists(item['path']):
-                            st.image(item['path'], use_column_width=True)
+                            st.image(item['path'], use_container_width=True)
                             st.write(f"**{item['name']}**")
                             st.caption(f"Category: {item['category']}")
                             st.caption(f"Added: {item['date_added']}")

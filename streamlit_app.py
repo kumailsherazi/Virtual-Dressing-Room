@@ -255,14 +255,29 @@ def save_uploaded_file(uploaded_file, category):
         # Create directory if it doesn't exist
         os.makedirs(f"static/images/uploaded_{category}", exist_ok=True)
         
+        # Generate a unique filename to avoid conflicts
+        file_ext = os.path.splitext(uploaded_file.name)[1]
+        unique_filename = f"{uuid.uuid4()}{file_ext}"
+        file_path = os.path.join(f"static/images/uploaded_{category}", unique_filename)
+        
         # Save the file
-        file_path = os.path.join(f"static/images/uploaded_{category}", uploaded_file.name)
         with open(file_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
-        return file_path
+        return file_path, unique_filename
     except Exception as e:
         st.error(f"Error saving file: {e}")
-        return None
+        return None, None
+
+# Function to delete uploaded file
+def delete_uploaded_file(file_path):
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            return True
+        return False
+    except Exception as e:
+        st.error(f"Error deleting file: {e}")
+        return False
 
 # Sidebar navigation
 st.sidebar.title("✨ VFIT")
@@ -275,13 +290,18 @@ with st.sidebar.expander("➕ Add New Item"):
     uploaded_file = st.file_uploader("Upload Item Image", type=["png", "jpg", "jpeg"])
     
     if st.button("Add to Wardrobe") and uploaded_file is not None and item_name:
-        file_path = save_uploaded_file(uploaded_file, item_category.lower())
-        if file_path:
+        file_path, filename = save_uploaded_file(uploaded_file, item_category.lower())
+        if file_path and filename:
             st.success(f"Successfully added {item_name} to {item_category} category!")
             # Add to session state to show immediately
             if f'uploaded_{item_category.lower()}' not in st.session_state:
                 st.session_state[f'uploaded_{item_category.lower()}'] = []
-            st.session_state[f'uploaded_{item_category.lower()}'].append((item_name, file_path))
+            st.session_state[f'uploaded_{item_category.lower()}'].append({
+                'name': item_name,
+                'path': file_path,
+                'filename': filename,
+                'id': str(uuid.uuid4())
+            })
         else:
             st.error("Failed to save the item. Please try again.")
 
@@ -768,8 +788,18 @@ elif st.session_state.page == 'tryon':
                     item_categories[category_name] = []
                 # Add only items that aren't already in the list
                 for item in st.session_state[session_key]:
-                    if item not in item_categories[category_name]:
-                        item_categories[category_name].append(item)
+                    item_tuple = (item['name'], item['path'])
+                    if item_tuple not in item_categories[category_name]:
+                        item_categories[category_name].append(item_tuple)
+                        
+                        # Add delete button for uploaded items
+                        if st.button(f"🗑️ Delete {item['name']}", key=f"delete_{item['id']}"):
+                            if delete_uploaded_file(item['path']):
+                                st.session_state[session_key] = [x for x in st.session_state[session_key] if x['id'] != item['id']]
+                                st.success(f"Successfully deleted {item['name']}")
+                                st.rerun()
+                            else:
+                                st.error("Failed to delete the item. Please try again.")
         
         for category, items in item_categories.items():
             st.write(f"**{category}**")

@@ -76,6 +76,10 @@ if 'selected_item' not in st.session_state:
     st.session_state.selected_item = None
 if 'processed_image' not in st.session_state:
     st.session_state.processed_image = None
+if 'cart_items' not in st.session_state:
+    st.session_state.cart_items = []
+if 'current_item' not in st.session_state:
+    st.session_state.current_item = None
 
 # Load cascade classifier with error handling
 @st.cache_resource
@@ -245,8 +249,42 @@ def overlay_image(background, overlay, x, y):
     
     return background
 
+# Function to save uploaded file
+def save_uploaded_file(uploaded_file, category):
+    try:
+        # Create directory if it doesn't exist
+        os.makedirs(f"static/images/uploaded_{category}", exist_ok=True)
+        
+        # Save the file
+        file_path = os.path.join(f"static/images/uploaded_{category}", uploaded_file.name)
+        with open(file_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        return file_path
+    except Exception as e:
+        st.error(f"Error saving file: {e}")
+        return None
+
 # Sidebar navigation
 st.sidebar.title("✨ VFIT")
+
+# Upload new item section in sidebar
+with st.sidebar.expander("➕ Add New Item"):
+    st.subheader("Upload New Item")
+    item_name = st.text_input("Item Name")
+    item_category = st.selectbox("Category", ["Necklaces", "Earrings", "Tiaras", "Goggles", "Tops"])
+    uploaded_file = st.file_uploader("Upload Item Image", type=["png", "jpg", "jpeg"])
+    
+    if st.button("Add to Wardrobe") and uploaded_file is not None and item_name:
+        file_path = save_uploaded_file(uploaded_file, item_category.lower())
+        if file_path:
+            st.success(f"Successfully added {item_name} to {item_category} category!")
+            # Add to session state to show immediately
+            if f'uploaded_{item_category.lower()}' not in st.session_state:
+                st.session_state[f'uploaded_{item_category.lower()}'] = []
+            st.session_state[f'uploaded_{item_category.lower()}'].append((item_name, file_path))
+        else:
+            st.error("Failed to save the item. Please try again.")
+
 page = st.sidebar.selectbox(
     "Navigate",
     ["🏠 Home", "👔 Wardrobe", "📸 Try-On", "ℹ️ About"]
@@ -620,12 +658,23 @@ elif st.session_state.page == 'tryon':
                 frame = np.array(image)
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                 
-                # Get selected item or default
-                selected_item = st.session_state.get('selected_item', 'static/images/Necklace11.png')
+                # Get selected items or default
+                items_to_try = []
+                if st.session_state.current_item:
+                    items_to_try = [st.session_state.current_item]
+                elif st.session_state.cart_items:
+                    items_to_try = [item['path'] for item in st.session_state.cart_items]
+                else:
+                    items_to_try = ['static/images/Necklace11.png']  # Default item
                 
                 # Process the frame with virtual try-on
                 try:
-                    processed_frame = process_frame(frame, selected_item)
+                    processed_frame = frame.copy()
+                    for item_path in items_to_try:
+                        processed_frame = process_frame(processed_frame, item_path)
+                    
+                    if processed_frame is None:
+                        processed_frame = frame.copy()  # Fallback to original if processing fails
                     
                     if processed_frame is not None:
                         # Convert back to RGB for display
@@ -648,12 +697,23 @@ elif st.session_state.page == 'tryon':
                 frame = np.array(image)
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                 
-                # Get selected item or default
-                selected_item = st.session_state.get('selected_item', 'static/images/Necklace11.png')
+                # Get selected items or default
+                items_to_try = []
+                if st.session_state.current_item:
+                    items_to_try = [st.session_state.current_item]
+                elif st.session_state.cart_items:
+                    items_to_try = [item['path'] for item in st.session_state.cart_items]
+                else:
+                    items_to_try = ['static/images/Necklace11.png']  # Default item
                 
                 # Process the frame with virtual try-on
                 try:
-                    processed_frame = process_frame(frame, selected_item)
+                    processed_frame = frame.copy()
+                    for item_path in items_to_try:
+                        processed_frame = process_frame(processed_frame, item_path)
+                    
+                    if processed_frame is None:
+                        processed_frame = frame.copy()  # Fallback to original if processing fails
                     
                     if processed_frame is not None:
                         # Convert back to RGB for display
@@ -670,7 +730,7 @@ elif st.session_state.page == 'tryon':
     with col2:
         st.subheader("👔 Select Item")
         
-        # Quick item selection
+        # Base item categories
         item_categories = {
             "Necklaces": [
                 ("Silver Necklace", "static/images/Necklace11.png"),
@@ -692,12 +752,24 @@ elif st.session_state.page == 'tryon':
                 ("Sun Glasses", "static/images/Sunglasses62.png"),
                 ("Spectacles", "static/images/Sunglasses63.png"),
             ],
-            "T-shirts": [
+            "Tops": [
                 ("Orange T-Shirt", "static/images/Tops41.png"),
                 ("Pink T-Shirt", "static/images/Tops42.png"),
                 ("White T-Shirt", "static/images/Tops43.png")
             ]
         }
+        
+        # Add uploaded items to their respective categories
+        for category in ["necklaces", "earrings", "tiaras", "goggles", "tops"]:
+            session_key = f'uploaded_{category}'
+            if session_key in st.session_state and st.session_state[session_key]:
+                category_name = category.capitalize()
+                if category_name not in item_categories:
+                    item_categories[category_name] = []
+                # Add only items that aren't already in the list
+                for item in st.session_state[session_key]:
+                    if item not in item_categories[category_name]:
+                        item_categories[category_name].append(item)
         
         for category, items in item_categories.items():
             st.write(f"**{category}**")
@@ -723,14 +795,49 @@ elif st.session_state.page == 'tryon':
                     else:
                         st.image(path, width=60)
                 with col_btn:
-                    if st.button(f"Select {name}", key=f"select_{path}"):
-                        st.session_state.selected_item = path
-                        st.success(f"Selected: {name}")
+                    if st.button(f"Add to Cart", key=f"add_{path}"):
+                        if path not in [item['path'] for item in st.session_state.cart_items]:
+                            st.session_state.cart_items.append({
+                                'name': name,
+                                'path': path,
+                                'id': str(uuid.uuid4())  # Unique ID for each item
+                            })
+                            st.success(f"Added {name} to cart!")
+                        else:
+                            st.warning("Item already in cart")
         
-        # Current selection
+        # Shopping Cart
+        st.subheader("🛒 Shopping Cart")
+        
+        if not st.session_state.cart_items:
+            st.info("Your cart is empty. Add items from above.")
+        else:
+            for i, item in enumerate(st.session_state.cart_items):
+                col1, col2, col3 = st.columns([1, 3, 1])
+                with col1:
+                    st.image(item['path'], width=50)
+                with col2:
+                    st.write(f"**{item['name']}**")
+                with col3:
+                    if st.button("❌", key=f"remove_{item['id']}"):
+                        st.session_state.cart_items = [x for x in st.session_state.cart_items if x['id'] != item['id']]
+                        st.rerun()
+            
+            # Try on all items button
+            if st.button("👕 Try On All Items"):
+                st.session_state.current_item = None  # Reset current item
+                st.session_state.page = "tryon"
+                st.rerun()
+        
+        # Current selection for single item try-on
+        st.subheader("👔 Quick Try-On")
         if 'selected_item' in st.session_state and st.session_state.selected_item is not None:
             st.write("**Currently Selected:**")
             st.write(st.session_state.selected_item.split('/')[-1])
+            if st.button("Try On This Item"):
+                st.session_state.current_item = st.session_state.selected_item
+                st.session_state.page = "tryon"
+                st.rerun()
         else:
             st.write("**No item selected**")
         

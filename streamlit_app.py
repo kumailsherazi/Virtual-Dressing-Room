@@ -620,15 +620,46 @@ elif st.session_state.page == 'wardrobe':
                             st.caption(f"Category: {item['category']}")
                             st.caption(f"Added: {item['date_added']}")
                             
-                            # Add buttons in columns
-                            col1, col2 = st.columns([2, 1])
-                            with col1:
-                                if st.button(f"👗 Try on", key=f"uploaded_try_{item['category']}_{i}_{item['name'].replace(' ', '_')}"):
-                                    st.session_state.selected_item = item['path']
-                                    st.session_state.page = 'tryon'
-                                    st.rerun()
-                            with col2:
-                                if st.button("🗑️", key=f"delete_{item['category']}_{i}_{item['name'].replace(' ', '_')}"):
+                            # Add buttons with better styling
+                            st.markdown("""
+                            <style>
+                                .delete-btn {
+                                    background-color: #ff4b4b !important;
+                                    color: white !important;
+                                    border: none !important;
+                                    padding: 0.5rem 1rem !important;
+                                    border-radius: 4px !important;
+                                    font-weight: bold !important;
+                                    margin-top: 0.5rem !important;
+                                    width: 100% !important;
+                                }
+                                .tryon-btn {
+                                    background-color: #4CAF50 !important;
+                                    color: white !important;
+                                    border: none !important;
+                                    padding: 0.5rem 1rem !important;
+                                    border-radius: 4px !important;
+                                    font-weight: bold !important;
+                                    margin-top: 0.5rem !important;
+                                    width: 100% !important;
+                                }
+                            </style>
+                            """, unsafe_allow_html=True)
+                            
+                            # Try on button
+                            if st.button(f"👗 Try on {item['name']}", 
+                                       key=f"uploaded_try_{item['category']}_{i}_{item['name'].replace(' ', '_')}",
+                                       help=f"Try on {item['name']}"):
+                                st.session_state.selected_item = item['path']
+                                st.session_state.page = 'tryon'
+                                st.rerun()
+                            
+                            # Delete button with confirmation
+                            if st.button(f"🗑️ Delete {item['name']}", 
+                                       key=f"delete_{item['category']}_{i}_{item['name'].replace(' ', '_')}",
+                                       help=f"Delete {item['name']} from your wardrobe"):
+                                # Show confirmation dialog
+                                if st.session_state.get(f'confirm_delete_{i}') == item['path']:
                                     # Delete the file
                                     if os.path.exists(item['path']):
                                         os.remove(item['path'])
@@ -639,6 +670,10 @@ elif st.session_state.page == 'wardrobe':
                                         json.dump(uploaded_items, f)
                                     st.success(f"Successfully deleted {item['name']}")
                                     st.rerun()
+                                else:
+                                    st.session_state[f'confirm_delete_{i}'] = item['path']
+                                    st.warning(f"Are you sure you want to delete {item['name']}? Click the delete button again to confirm.")
+                                    st.experimental_rerun()
                         else:
                             st.warning(f"Could not find image: {item['path']}")
                     except Exception as e:

@@ -620,11 +620,25 @@ elif st.session_state.page == 'wardrobe':
                             st.caption(f"Category: {item['category']}")
                             st.caption(f"Added: {item['date_added']}")
                             
-                            # Add try-on button
-                            if st.button(f"Try on {item['name']}", key=f"uploaded_try_{item['category']}_{i}_{item['name'].replace(' ', '_')}"):
-                                st.session_state.selected_item = item['path']
-                                st.session_state.page = 'tryon'
-                                st.rerun()
+                            # Add buttons in columns
+                            col1, col2 = st.columns([2, 1])
+                            with col1:
+                                if st.button(f"👗 Try on", key=f"uploaded_try_{item['category']}_{i}_{item['name'].replace(' ', '_')}"):
+                                    st.session_state.selected_item = item['path']
+                                    st.session_state.page = 'tryon'
+                                    st.rerun()
+                            with col2:
+                                if st.button("🗑️", key=f"delete_{item['category']}_{i}_{item['name'].replace(' ', '_')}"):
+                                    # Delete the file
+                                    if os.path.exists(item['path']):
+                                        os.remove(item['path'])
+                                    # Remove from uploaded items list
+                                    uploaded_items.remove(item)
+                                    # Save the updated list
+                                    with open(uploaded_items_file, 'w') as f:
+                                        json.dump(uploaded_items, f)
+                                    st.success(f"Successfully deleted {item['name']}")
+                                    st.rerun()
                         else:
                             st.warning(f"Could not find image: {item['path']}")
                     except Exception as e:

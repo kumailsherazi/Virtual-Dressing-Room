@@ -118,97 +118,115 @@ def load_face_detector():
                 if not face_cascade.empty():
                     return face_cascade
         
-        st.error("Face detection model not found. Please ensure haarcascade_frontalface_default.xml is available.")
+        # If no cascade file is found, return None
         return None
         
     except Exception as e:
         st.error(f"Error initializing face detector: {str(e)}")
         return None
 
-def get_face_landmarks(face_detector, frame, face_rect=None):
-    """Detect facial landmarks using OpenCV's Haar cascade with improved accuracy"""
-    if face_rect is None:
-        # If no face rectangle is provided, detect faces first
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = face_detector.detectMultiScale(
-            gray,
-            scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(30, 30)
-        )
-        if len(faces) == 0:
-            return None
-        x, y, w, h = faces[0]
+# Simple face detection function
+def detect_faces(frame, face_detector):
+    if face_detector is None:
+        # Fallback: use a simple face detection approximation
+        height, width = frame.shape[:2]
+        return [(int(width/4), int(height/4), int(width/2), int(height/3))]
+    
+    # Convert to grayscale for detection
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    
+    # Detect faces
+    faces = face_detector.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(30, 30),
+        flags=cv2.CASCADE_SCALE_IMAGE
+    )
+    
+    return faces
+
+# Process frame for virtual try-on
+def process_frame(frame, item_path):
+    # Load face detector
+    face_detector = load_face_detector()
+    
+    # Detect faces
+    faces = detect_faces(frame, face_detector)
+    
+    if len(faces) == 0:
+        return None  # Return None if no faces detected
+    
+    # Find the largest face (most likely the main subject)
+    faces = sorted(faces, key=lambda x: x[2] * x[3], reverse=True)
+    x, y, w, h = faces[0]
+    
+    # Load the item image with transparency
+    if not os.path.exists(item_path):
+        # Create a placeholder item
+        item_img = np.zeros((100, 100, 4), dtype=np.uint8)
+        cv2.rectangle(item_img, (10, 10), (90, 90), (255, 0, 0, 255), -1)
     else:
-        x, y, w, h = face_rect
+        item_img = cv2.imread(item_path, cv2.IMREAD_UNCHANGED)
+        if item_img is None:
+            # Create a placeholder item if loading fails
+            item_img = np.zeros((100, 100, 4), dtype=np.uint8)
+            cv2.rectangle(item_img, (10, 10), (90, 90), (255, 0, 0, 255), -1)
     
-    # Calculate more precise facial landmarks based on face rectangle
-    landmarks = []
+    # Process the frame
+    result = frame.copy()
     
-    # Left eye (more precise position)
-    landmarks.append((x + int(w * 0.2), y + int(h * 0.3)))
-    
-    # Right eye (more precise position)
-    landmarks.append((x + int(w * 0.8), y + int(h * 0.3)))
-    
-    # Nose tip (more precise position)
-    landmarks.append((x + w // 2, y + h // 2))
-    
-    # Mouth corners (more precise position)
-    landmarks.append((x + int(w * 0.25), y + int(h * 0.65)))  # Left corner
-    landmarks.append((x + int(w * 0.75), y + int(h * 0.65)))  # Right corner
-    
-    # Chin (more precise position)
-    landmarks.append((x + w // 2, y + int(h * 0.9)))
-    
-    # Face boundaries (for better ear/accessory placement)
-    landmarks.append((max(0, x - w//10), y + h // 2))  # Left face boundary
-    landmarks.append((min(frame.shape[1], x + w + w//10), y + h // 2))  # Right face boundary
-    
-    # Forehead (for hat/headband placement)
-    landmarks.append((x + w // 2, max(0, y - h // 6)))
-    
-    # Cheek points (for better face shape estimation)
-    landmarks.append((x + int(w * 0.15), y + int(h * 0.5)))  # Left cheek
-    landmarks.append((x + int(w * 0.85), y + int(h * 0.5)))  # Right cheek
-    
-    return np.array(landmarks, dtype=np.int32)
-
-def calculate_face_angle(landmarks):
-    """Calculate the rotation angle of the face based on eye positions"""
-    if landmarks is None or len(landmarks) < 2:
-        return 0.0
-    
-    try:
-        # Get first two points (eyes) from landmarks
-        left_eye = landmarks[0]
-        right_eye = landmarks[1]
+    # Determine placement based on item type
+    if "necklace" in item_path.lower():
+        item_height = int(h * 0.5)
+        item_width = int(w * 1.5)
+        y_offset = int(y + h * 0.8)
+        x_offset = int(x - w * 0.25)
         
-        # Calculate angle between eyes
-        dY = float(right_eye[1] - left_eye[1])
-        dX = float(right_eye[0] - left_eye[0])
-        angle = np.degrees(np.arctan2(dY, dX))
-        return angle
-            
-    except Exception as e:
-        st.warning(f"Error calculating face angle: {str(e)}")
+    elif "earring" in item_path.lower():
+        item_height = int(h * 0.3)
+        item_width = int(w * 0.3)
+        y_offset = int(y + h * 0.3)
+        
+        # Left earring
+        x_offset_left = max(0, x - w//3)
+        item_resized = cv2.resize(item_img, (item_width, item_height))
+        result = overlay_image(result, item_resized, x_offset_left, y_offset)
+        
+        # Right earring (flipped)
+        x_offset_right = min(frame.shape[1] - item_width, x + w - w//3)
+        item_flipped = cv2.flip(item_resized, 1)
+        result = overlay_image(result, item_flipped, x_offset_right, y_offset)
+        return result
     
-    return 0.0
-
-def rotate_image(image, angle, center=None, scale=1.0):
-    """Rotate an image around its center"""
-    (h, w) = image.shape[:2]
-    if center is None:
-        center = (w // 2, h // 2)
+    elif any(x in item_path.lower() for x in ["tiara", "goggle", "sunglass", "glasses"]):
+        item_height = int(h * 0.4)
+        item_width = int(w * 1.2)
+        y_offset = int(y - h * 0.3)
+        x_offset = int(x - w * 0.1)
     
-    # Perform the rotation and return the image
-    M = cv2.getRotationMatrix2D(center, angle, scale)
-    rotated = cv2.warpAffine(image, M, (w, h))
-    return rotated
+    elif any(x in item_path.lower() for x in ["top", "shirt", "t-shirt"]):
+        item_height = int(h * 1.5)
+        item_width = int(w * 1.5)
+        y_offset = int(y + h * 1.2)
+        x_offset = int(x - w * 0.25)
+    
+    else:
+        # Default placement (centered on face)
+        item_height = int(h * 0.8)
+        item_width = int(w * 0.8)
+        y_offset = y
+        x_offset = x
+    
+    # Resize and apply the item
+    item_resized = cv2.resize(item_img, (item_width, item_height))
+    result = overlay_image(result, item_resized, x_offset, y_offset)
+    
+    return result
 
 # Helper function to overlay images with transparency
-def overlay_image(background, overlay, x, y, angle=0, scale=1.0):
-    """Overlay an image with transparency onto a background image with optional rotation and scaling"""
+def overlay_image(background, overlay, x, y):
+    """Overlay an image with transparency onto a background image"""
     try:
         # Check if images are valid
         if overlay is None or background is None:
@@ -226,18 +244,6 @@ def overlay_image(background, overlay, x, y, angle=0, scale=1.0):
             else:
                 # Convert BGR to BGRA
                 overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2BGRA)
-        
-        # Rotate and scale the overlay if needed
-        if angle != 0 or scale != 1.0:
-            h, w = overlay.shape[0], overlay.shape[1]
-            center = (w // 2, h // 2)
-            M = cv2.getRotationMatrix2D(center, angle, scale)
-            overlay = cv2.warpAffine(
-                overlay, M, (w, h), 
-                flags=cv2.INTER_LINEAR, 
-                borderMode=cv2.BORDER_CONSTANT, 
-                borderValue=(0, 0, 0, 0)
-            )
         
         # Get the dimensions of the overlay
         h, w = overlay.shape[0], overlay.shape[1]
@@ -275,110 +281,7 @@ def overlay_image(background, overlay, x, y, angle=0, scale=1.0):
         return background
         
     except Exception as e:
-        st.warning(f"Error in overlay_image: {str(e)}")
         return background
-
-# Process frame for virtual try-on
-def process_frame(frame, item_path):
-    # Load face detector
-    face_detector = load_face_detector()
-    if face_detector is None:
-        return frame
-    
-    # Convert to grayscale for detection
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    
-    # Equalize histogram to improve contrast
-    gray = cv2.equalizeHist(gray)
-    
-    # Detect faces with more precise parameters
-    faces = face_detector.detectMultiScale(
-        gray,
-        scaleFactor=1.1,
-        minNeighbors=5,
-        minSize=(30, 30),
-        flags=cv2.CASCADE_SCALE_IMAGE
-    )
-    
-    if len(faces) == 0:
-        return None  # Return None if no faces detected
-    
-    # Find the largest face (most likely the main subject)
-    faces = sorted(faces, key=lambda x: x[2] * x[3], reverse=True)
-    x, y, w, h = faces[0]
-    
-    # Expand the face rectangle slightly for better landmark detection
-    x = max(0, x - w//10)
-    y = max(0, y - h//10)
-    w = min(frame.shape[1] - x, w + w//5)
-    h = min(frame.shape[0] - y, h + h//5)
-    
-    # Get precise landmarks
-    landmarks = get_face_landmarks(face_detector, frame, (x, y, w, h))
-    
-    # Load the item image with transparency
-    if not os.path.exists(item_path):
-        st.error(f"Item image not found: {item_path}")
-        return frame
-    
-    item_img = cv2.imread(item_path, cv2.IMREAD_UNCHANGED)
-    if item_img is None:
-        st.error(f"Failed to load item image: {item_path}")
-        return frame
-    
-    # Process the frame
-    result = frame.copy()
-    
-    # Calculate face angle for rotation compensation
-    face_angle = calculate_face_angle(landmarks) if landmarks is not None else 0
-    
-    # Determine placement based on item type
-    if "necklace" in item_path.lower():
-        item_height = int(h * 0.5)
-        item_width = int(w * 1.5)
-        y_offset = int(y + h * 0.8)
-        x_offset = int(x - w * 0.25)
-        
-    elif "earring" in item_path.lower():
-        item_height = int(h * 0.3)
-        item_width = int(w * 0.3)
-        y_offset = int(y + h * 0.3)
-        
-        # Left earring
-        x_offset_left = max(0, x - w//3)
-        item_resized = cv2.resize(item_img, (item_width, item_height))
-        result = overlay_image(result, item_resized, x_offset_left, y_offset, angle=-face_angle)
-        
-        # Right earring (flipped)
-        x_offset_right = min(frame.shape[1] - item_width, x + w - w//3)
-        item_flipped = cv2.flip(item_resized, 1)
-        result = overlay_image(result, item_flipped, x_offset_right, y_offset, angle=-face_angle)
-        return result
-    
-    elif any(x in item_path.lower() for x in ["tiara", "goggle", "sunglass", "glasses"]):
-        item_height = int(h * 0.4)
-        item_width = int(w * 1.2)
-        y_offset = int(y - h * 0.3)
-        x_offset = int(x - w * 0.1)
-    
-    elif any(x in item_path.lower() for x in ["top", "shirt", "t-shirt"]):
-        item_height = int(h * 1.5)
-        item_width = int(w * 1.5)
-        y_offset = int(y + h * 1.2)
-        x_offset = int(x - w * 0.25)
-    
-    else:
-        # Default placement (centered on face)
-        item_height = int(h * 0.8)
-        item_width = int(w * 0.8)
-        y_offset = y
-        x_offset = x
-    
-    # Resize and apply the item
-    item_resized = cv2.resize(item_img, (item_width, item_height))
-    result = overlay_image(result, item_resized, x_offset, y_offset, angle=-face_angle)
-    
-    return result
 
 # Function to save uploaded file
 def save_uploaded_file(uploaded_file, category):
@@ -565,7 +468,7 @@ elif st.session_state.page == 'wardrobe':
         cols = st.columns(3)
         earrings = [
             ("Goldwork Earrings", "static/images/Earrings21.png"),
-            ("Studs", "static/images/Earrings22.png"),
+            ("Studs", "static/images/Eearrings22.png"),
             ("Studs", "static/images/Earrings23.png"),
             ("Silver Work Earrings", "static/images/Earrings24.png"),
             ("Goldwork Earrings", "static/images/Earrings25.png"),
@@ -735,32 +638,21 @@ elif st.session_state.page == 'tryon':
                 # Get selected item or default
                 selected_item = st.session_state.selected_item if st.session_state.selected_item else 'static/images/Necklace11.png'
                 
-                # Check if we need to reprocess (item changed or new image)
-                needs_processing = (
-                    st.session_state.last_processed_item != selected_item or 
-                    st.session_state.processed_image is None
-                )
-                
-                if needs_processing:
-                    # Process the frame with virtual try-on
-                    try:
-                        processed_frame = process_frame(frame, selected_item)
-                        
-                        if processed_frame is not None:
-                            # Convert back to RGB for display
-                            processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
-                            st.image(processed_frame_rgb, caption="Virtual Try-On Result", use_container_width=True)
-                            st.session_state.processed_image = processed_frame_rgb
-                            st.session_state.last_processed_item = selected_item
-                        else:
-                            st.image(frame, caption="Original Photo", use_container_width=True)
-                            st.warning("No face detected. Please ensure your face is clearly visible in the photo.")
-                    except Exception as e:
-                        st.error(f"Error processing image: {str(e)}")
+                # Process the frame with virtual try-on
+                try:
+                    processed_frame = process_frame(frame, selected_item)
+                    
+                    if processed_frame is not None:
+                        # Convert back to RGB for display
+                        processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
+                        st.image(processed_frame_rgb, caption="Virtual Try-On Result", use_container_width=True)
+                        st.session_state.processed_image = processed_frame_rgb
+                    else:
                         st.image(frame, caption="Original Photo", use_container_width=True)
-                else:
-                    # Show the previously processed image
-                    st.image(st.session_state.processed_image, caption="Virtual Try-On Result", use_container_width=True)
+                        st.warning("No face detected. Please ensure your face is clearly visible in the photo.")
+                except Exception as e:
+                    st.error(f"Error processing image: {str(e)}")
+                    st.image(frame, caption="Original Photo", use_container_width=True)
                     
         except Exception as e:
             st.error("Error accessing webcam. Please ensure your camera is connected and permissions are granted.")
@@ -783,7 +675,6 @@ elif st.session_state.page == 'tryon':
                         processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
                         st.image(processed_frame_rgb, caption="Virtual Try-On Result", use_container_width=True)
                         st.session_state.processed_image = processed_frame_rgb
-                        st.session_state.last_processed_item = selected_item
                     else:
                         st.image(frame, caption="Original Photo", use_container_width=True)
                         st.warning("No face detected. Please ensure your face is clearly visible in the photo.")
@@ -858,7 +749,7 @@ elif st.session_state.page == 'tryon':
                 with col_btn:
                     if st.button(f"Select {name}", key=f"select_{path}"):
                         st.session_state.selected_item = path
-                        st.session_state.last_processed_item = None  # Force reprocessing
+                        st.session_state.processed_image = None  # Force reprocessing
                         st.success(f"Selected: {name}")
         
         # Shopping Cart
@@ -895,7 +786,7 @@ elif st.session_state.page == 'tryon':
                 
             if st.button("Try On This Item"):
                 st.session_state.current_item = st.session_state.selected_item
-                st.session_state.last_processed_item = None  # Force reprocessing
+                st.session_state.processed_image = None  # Force reprocessing
                 st.rerun()
         else:
             st.write("**No item selected**")

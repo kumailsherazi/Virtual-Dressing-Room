@@ -90,6 +90,8 @@ if 'current_item' not in st.session_state:
     st.session_state.current_item = None
 if 'uploaded_items' not in st.session_state:
     st.session_state.uploaded_items = []
+if 'last_processed_item' not in st.session_state:
+    st.session_state.last_processed_item = None
 
 # Initialize face detector
 @st.cache_resource
@@ -100,10 +102,8 @@ def load_face_detector():
         
         if os.path.exists(cascade_path):
             face_cascade = cv2.CascadeClassifier(cascade_path)
-            if face_cascade.empty():
-                st.error("Failed to load face detection model.")
-                return None
-            return face_cascade
+            if not face_cascade.empty():
+                return face_cascade
         
         # Try alternative paths
         cascade_paths = [
@@ -132,9 +132,9 @@ def get_face_landmarks(face_detector, frame, face_rect=None):
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = face_detector.detectMultiScale(
             gray,
-            scaleFactor=1.05,
-            minNeighbors=6,
-            minSize=(50, 50)
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(30, 30)
         )
         if len(faces) == 0:
             return None
@@ -294,14 +294,14 @@ def process_frame(frame, item_path):
     # Detect faces with more precise parameters
     faces = face_detector.detectMultiScale(
         gray,
-        scaleFactor=1.05,
-        minNeighbors=6,
-        minSize=(50, 50),
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(30, 30),
         flags=cv2.CASCADE_SCALE_IMAGE
     )
     
     if len(faces) == 0:
-        return frame  # Return original frame if no faces detected
+        return None  # Return None if no faces detected
     
     # Find the largest face (most likely the main subject)
     faces = sorted(faces, key=lambda x: x[2] * x[3], reverse=True)
@@ -724,7 +724,7 @@ elif st.session_state.page == 'tryon':
         
         # Camera input with error handling
         try:
-            camera_input = st.camera_input("Take a photo to try on items")
+            camera_input = st.camera_input("Take a photo to try on items", key="camera_input")
             
             if camera_input is not None:
                 # Convert the uploaded image to OpenCV format
@@ -732,68 +732,58 @@ elif st.session_state.page == 'tryon':
                 frame = np.array(image)
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                 
-                # Get selected items or default
-                items_to_try = []
-                if st.session_state.current_item:
-                    items_to_try = [st.session_state.current_item]
-                elif st.session_state.cart_items:
-                    items_to_try = [item['path'] for item in st.session_state.cart_items]
-                else:
-                    items_to_try = ['static/images/Necklace11.png']  # Default item
+                # Get selected item or default
+                selected_item = st.session_state.selected_item if st.session_state.selected_item else 'static/images/Necklace11.png'
                 
-                # Process the frame with virtual try-on
-                try:
-                    processed_frame = frame.copy()
-                    for item_path in items_to_try:
-                        processed_frame = process_frame(processed_frame, item_path)
-                    
-                    if processed_frame is None:
-                        processed_frame = frame.copy()  # Fallback to original if processing fails
-                    
-                    if processed_frame is not None:
-                        # Convert back to RGB for display
-                        processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
-                        st.image(processed_frame_rgb, caption="Virtual Try-On Result", use_container_width=True)
-                        st.session_state.processed_image = processed_frame_rgb
-                    else:
+                # Check if we need to reprocess (item changed or new image)
+                needs_processing = (
+                    st.session_state.last_processed_item != selected_item or 
+                    st.session_state.processed_image is None
+                )
+                
+                if needs_processing:
+                    # Process the frame with virtual try-on
+                    try:
+                        processed_frame = process_frame(frame, selected_item)
+                        
+                        if processed_frame is not None:
+                            # Convert back to RGB for display
+                            processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
+                            st.image(processed_frame_rgb, caption="Virtual Try-On Result", use_container_width=True)
+                            st.session_state.processed_image = processed_frame_rgb
+                            st.session_state.last_processed_item = selected_item
+                        else:
+                            st.image(frame, caption="Original Photo", use_container_width=True)
+                            st.warning("No face detected. Please ensure your face is clearly visible in the photo.")
+                    except Exception as e:
+                        st.error(f"Error processing image: {str(e)}")
                         st.image(frame, caption="Original Photo", use_container_width=True)
-                        st.warning("No face detected. Please ensure your face is clearly visible in the photo.")
-                except Exception as e:
-                    st.error(f"Error processing image: {str(e)}")
-                    st.image(frame, caption="Original Photo", use_container_width=True)
+                else:
+                    # Show the previously processed image
+                    st.image(st.session_state.processed_image, caption="Virtual Try-On Result", use_container_width=True)
                     
         except Exception as e:
             st.error("Error accessing webcam. Please ensure your camera is connected and permissions are granted.")
             st.info("As an alternative, you can upload an image below.")
-            uploaded_file = st.file_uploader("Or upload an image", type=["jpg", "jpeg", "png"])
+            uploaded_file = st.file_uploader("Or upload an image", type=["jpg", "jpeg", "png"], key="file_uploader")
             if uploaded_file is not None:
                 image = Image.open(uploaded_file)
                 frame = np.array(image)
                 frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                 
-                # Get selected items or default
-                items_to_try = []
-                if st.session_state.current_item:
-                    items_to_try = [st.session_state.current_item]
-                elif st.session_state.cart_items:
-                    items_to_try = [item['path'] for item in st.session_state.cart_items]
-                else:
-                    items_to_try = ['static/images/Necklace11.png']  # Default item
+                # Get selected item or default
+                selected_item = st.session_state.selected_item if st.session_state.selected_item else 'static/images/Necklace11.png'
                 
                 # Process the frame with virtual try-on
                 try:
-                    processed_frame = frame.copy()
-                    for item_path in items_to_try:
-                        processed_frame = process_frame(processed_frame, item_path)
-                    
-                    if processed_frame is None:
-                        processed_frame = frame.copy()  # Fallback to original if processing fails
+                    processed_frame = process_frame(frame, selected_item)
                     
                     if processed_frame is not None:
                         # Convert back to RGB for display
                         processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
                         st.image(processed_frame_rgb, caption="Virtual Try-On Result", use_container_width=True)
                         st.session_state.processed_image = processed_frame_rgb
+                        st.session_state.last_processed_item = selected_item
                     else:
                         st.image(frame, caption="Original Photo", use_container_width=True)
                         st.warning("No face detected. Please ensure your face is clearly visible in the photo.")
@@ -868,6 +858,7 @@ elif st.session_state.page == 'tryon':
                 with col_btn:
                     if st.button(f"Select {name}", key=f"select_{path}"):
                         st.session_state.selected_item = path
+                        st.session_state.last_processed_item = None  # Force reprocessing
                         st.success(f"Selected: {name}")
         
         # Shopping Cart
@@ -904,6 +895,7 @@ elif st.session_state.page == 'tryon':
                 
             if st.button("Try On This Item"):
                 st.session_state.current_item = st.session_state.selected_item
+                st.session_state.last_processed_item = None  # Force reprocessing
                 st.rerun()
         else:
             st.write("**No item selected**")

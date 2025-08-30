@@ -324,10 +324,14 @@ def process_frame(frame, item_path):
 def overlay_image(background, overlay, x, y, angle=0, scale=1.0):
     """Overlay an image with transparency onto a background image with optional rotation and scaling"""
     try:
-        # If the overlay doesn't have an alpha channel, add one
         if overlay is None or background is None:
             return background
             
+        # Convert background to BGR if it's grayscale
+        if len(background.shape) == 2:
+            background = cv2.cvtColor(background, cv2.COLOR_GRAY2BGR)
+        
+        # Ensure overlay has 4 channels (BGRA)
         if len(overlay.shape) < 3 or overlay.shape[2] < 4:
             overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2BGRA)
         
@@ -365,18 +369,16 @@ def overlay_image(background, overlay, x, y, angle=0, scale=1.0):
         alpha = np.expand_dims(alpha, axis=-1)  # Add channel dimension for broadcasting
         alpha_inv = 1.0 - alpha
         
+        # Ensure background has 3 channels (BGR)
+        if len(background.shape) == 2:
+            background = cv2.cvtColor(background, cv2.COLOR_GRAY2BGR)
+        
         # Blend the images using the alpha channel
         for c in range(0, 3):
-            if len(background.shape) > 2:  # Color image
-                background[y1:y2, x1:x2, c] = (
-                    alpha.squeeze() * overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2, c] +
-                    alpha_inv.squeeze() * background[y1:y2, x1:x2, c]
-                )
-            else:  # Grayscale image
-                background[y1:y2, x1:x2] = (
-                    alpha.squeeze() * overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2, c] +
-                    alpha_inv.squeeze() * background[y1:y2, x1:x2]
-                )
+            background[y1:y2, x1:x2, c] = (
+                alpha.squeeze() * overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2, c] +
+                alpha_inv.squeeze() * background[y1:y2, x1:x2, c]
+            )
         
         return background
         

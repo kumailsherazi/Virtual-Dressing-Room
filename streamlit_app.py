@@ -8,8 +8,16 @@ from PIL import Image
 import tempfile
 from datetime import datetime
 import uuid
-import dlib
 import math
+
+# Try to import dlib, but don't fail if it's not available
+try:
+    import dlib
+    DLIB_AVAILABLE = True
+except (ImportError, ModuleNotFoundError):
+    import warnings
+    warnings.warn("dlib not found. Falling back to basic face detection.")
+    DLIB_AVAILABLE = False
 
 # Page configuration
 st.set_page_config(
@@ -86,66 +94,86 @@ if 'current_item' not in st.session_state:
 # Initialize face detector and predictor
 @st.cache_resource
 def load_face_detector():
+    # First try to use dlib if available
+    if DLIB_AVAILABLE:
+        try:
+            detector = dlib.get_frontal_face_detector()
+            
+            # Try multiple possible paths for the shape predictor
+            predictor_paths = [
+                'shape_predictor_68_face_landmarks.dat',
+                'data/shape_predictor_68_face_landmarks.dat',
+                './data/shape_predictor_68_face_landmarks.dat'
+            ]
+            
+            for path in predictor_paths:
+                if os.path.exists(path):
+                    predictor = dlib.shape_predictor(path)
+                    st.success(f"Loaded dlib shape predictor from: {path}")
+                    return detector, predictor
+            
+            st.warning("dlib is available but shape predictor file not found. Falling back to basic detection.")
+            return detector, None
+            
+        except Exception as e:
+            st.warning(f"Error initializing dlib: {str(e)}. Falling back to OpenCV.")
+    
+    # Fallback to OpenCV's Haar cascade
     try:
-        # Try to load dlib's face detector and shape predictor
-        detector = dlib.get_frontal_face_detector()
-        
-        # Try multiple possible paths for the shape predictor
-        predictor_paths = [
-            'shape_predictor_68_face_landmarks.dat',
-            'data/shape_predictor_68_face_landmarks.dat',
-            './data/shape_predictor_68_face_landmarks.dat'
-        ]
-        
-        for path in predictor_paths:
-            if os.path.exists(path):
-                predictor = dlib.shape_predictor(path)
-                st.success(f"Loaded shape predictor from: {path}")
-                return detector, predictor
-        
-        # Fallback to Haar cascade if dlib's model is not found
         cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         if os.path.exists(cascade_path):
             face_cascade = cv2.CascadeClassifier(cascade_path)
-            st.warning("Using Haar cascade as fallback. For better results, download shape_predictor_68_face_landmarks.dat")
+            st.warning("Using OpenCV's Haar cascade for face detection. For better results, install dlib and download shape_predictor_68_face_landmarks.dat")
             return face_cascade, None
-        
-        st.error("No face detection model found. Please ensure shape_predictor_68_face_landmarks.dat is in the data/ directory.")
+            
+        st.error("No face detection model found. Please install dlib or ensure haarcascade_frontalface_default.xml is available.")
         return None, None
         
     except Exception as e:
-        st.error(f"Error loading face detector: {str(e)}")
+        st.error(f"Error initializing face detector: {str(e)}")
         return None, None
 
 def get_face_landmarks(face_detector, predictor, frame, face_rect=None):
-    """Detect facial landmarks using dlib's predictor"""
+    """Detect facial landmarks using dlib's predictor or fallback to basic face detection"""
+    if frame is None or frame.size == 0:
+        return None
+        
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
-    # If using dlib's HOG detector
-    if predictor is not None:
-        if face_rect is None:
-            # If no face_rect provided, detect faces
-            faces = face_detector(gray, 1)
-            if len(faces) == 0:
-                return None
-            face_rect = faces[0]  # Use first detected face
-            
-        # Get landmarks
-        landmarks = predictor(gray, face_rect)
-        return [(p.x, p.y) for p in landmarks.parts()]
+    # If using dlib's predictor
+    if predictor is not None and DLIB_AVAILABLE:
+        try:
+            if face_rect is None:
+                # If no face_rect provided, detect faces
+                faces = face_detector(gray, 1)
+                if len(faces) == 0:
+                    return None
+                face_rect = faces[0]  # Use first detected face
+                
+            # Get landmarks
+            landmarks = predictor(gray, face_rect)
+            return [(p.x, p.y) for p in landmarks.parts()]
+        except Exception as e:
+            st.warning(f"Error getting dlib landmarks: {str(e)}")
     
-    # Fallback for Haar cascade
-    elif face_rect is not None:
-        x, y, w, h = face_rect
+    # Fallback for Haar cascade or when dlib fails
+    if face_rect is not None:
+        if isinstance(face_rect, tuple) and len(face_rect) == 4:  # Haar cascade format (x,y,w,h)
+            x, y, w, h = face_rect
+        elif hasattr(face_rect, 'left'):  # dlib rectangle
+            x, y, w, h = face_rect.left(), face_rect.top(), face_rect.width(), face_rect.height()
+        else:
+            return None
+            
         # Return approximate landmark positions based on face rectangle
         return [
             (x + w//2, y + h//3),       # Nose tip
-            (x, y + h//3),              # Left eye
-            (x + w, y + h//3),          # Right eye
-            (x + w//4, y + h//2),       # Left mouth corner
-            (x + 3*w//4, y + h//2),     # Right mouth corner
-            (x + w//2, y),              # Forehead
-            (x + w//2, y + h)           # Chin
+            (x + w//4, y + h//3),        # Left eye
+            (x + 3*w//4, y + h//3),      # Right eye
+            (x + w//4, y + 2*h//3),      # Left mouth corner
+            (x + 3*w//4, y + 2*h//3),    # Right mouth corner
+            (x + w//2, y),               # Forehead
+            (x + w//2, y + h)            # Chin
         ]
     
     return None
@@ -342,54 +370,66 @@ def process_frame(frame, item_path):
 # Helper function to overlay images with transparency
 def overlay_image(background, overlay, x, y, angle=0, scale=1.0):
     """Overlay an image with transparency onto a background image with optional rotation and scaling"""
-    # If the overlay doesn't have an alpha channel, add one
-    if overlay.shape[2] < 4:
-        overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2BGRA)
-    
-    # Rotate and scale the overlay if needed
-    if angle != 0 or scale != 1.0:
+    try:
+        # If the overlay doesn't have an alpha channel, add one
+        if overlay is None or background is None:
+            return background
+            
+        if len(overlay.shape) < 3 or overlay.shape[2] < 4:
+            overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2BGRA)
+        
+        # Rotate and scale the overlay if needed
+        if angle != 0 or scale != 1.0:
+            h, w = overlay.shape[0], overlay.shape[1]
+            center = (w // 2, h // 2)
+            M = cv2.getRotationMatrix2D(center, angle, scale)
+            overlay = cv2.warpAffine(
+                overlay, M, (w, h), 
+                flags=cv2.INTER_LINEAR, 
+                borderMode=cv2.BORDER_CONSTANT, 
+                borderValue=(0, 0, 0, 0)
+            )
+        
+        # Get the dimensions of the overlay
         h, w = overlay.shape[0], overlay.shape[1]
-        center = (w // 2, h // 2)
-        M = cv2.getRotationMatrix2D(center, angle, scale)
-        overlay = cv2.warpAffine(overlay, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
-    
-    # Get the dimensions of the overlay
-    h, w = overlay.shape[0], overlay.shape[1]
-    
-    # Calculate the region of interest in the background
-    y1, y2 = max(0, y), min(background.shape[0], y + h)
-    x1, x2 = max(0, x), min(background.shape[1], x + w)
-    
-    # If the overlay is completely outside the background, return the original
-    if y1 >= y2 or x1 >= x2:
+        
+        # Calculate the region of interest in the background
+        y1, y2 = max(0, y), min(background.shape[0], y + h)
+        x1, x2 = max(0, x), min(background.shape[1], x + w)
+        
+        # If the overlay is completely outside the background, return the original
+        if y1 >= y2 or x1 >= x2:
+            return background
+        
+        # Calculate the corresponding region in the overlay
+        overlay_y1 = max(0, -y)
+        overlay_x1 = max(0, -x)
+        overlay_y2 = overlay_y1 + (y2 - y1)
+        overlay_x2 = overlay_x1 + (x2 - x1)
+        
+        # Extract the alpha channel and create a mask
+        alpha = overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2, 3] / 255.0
+        alpha = np.expand_dims(alpha, axis=-1)  # Add channel dimension for broadcasting
+        alpha_inv = 1.0 - alpha
+        
+        # Blend the images using the alpha channel
+        for c in range(0, 3):
+            if len(background.shape) > 2:  # Color image
+                background[y1:y2, x1:x2, c] = (
+                    alpha.squeeze() * overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2, c] +
+                    alpha_inv.squeeze() * background[y1:y2, x1:x2, c]
+                )
+            else:  # Grayscale image
+                background[y1:y2, x1:x2] = (
+                    alpha.squeeze() * overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2, c] +
+                    alpha_inv.squeeze() * background[y1:y2, x1:x2]
+                )
+        
         return background
-    
-    # Calculate the corresponding region in the overlay
-    overlay_y1 = max(0, -y)
-    overlay_x1 = max(0, -x)
-    overlay_y2 = overlay_y1 + (y2 - y1)
-    overlay_x2 = overlay_x1 + (x2 - x1)
-    
-    # Extract the alpha channel and create a mask
-    alpha = overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2, 3] / 255.0
-    alpha = np.expand_dims(alpha, axis=-1)  # Add channel dimension for broadcasting
-    alpha_inv = 1.0 - alpha
-    
-    # Blend the images using the alpha channel
-    for c in range(0, 3):
-        background[y1:y2, x1:x2, c] = (
-            alpha.squeeze() * overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2, c] +
-            alpha_inv.squeeze() * background[y1:y2, x1:x2, c]
-        )
-        roi = (overlay_colors * alpha_mask + roi * (1 - alpha_mask)).astype(np.uint8)
-    else:
-        # If no alpha channel, simply overlay
-        roi = overlay_portion
-    
-    # Put the modified ROI back into the background
-    background[roi_y1:roi_y2, roi_x1:roi_x2] = roi
-    
-    return background
+        
+    except Exception as e:
+        st.warning(f"Error in overlay_image: {str(e)}")
+        return background
 
 # Function to save uploaded file
 def save_uploaded_file(uploaded_file, category):

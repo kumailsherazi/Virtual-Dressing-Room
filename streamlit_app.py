@@ -8,6 +8,8 @@ from PIL import Image
 import tempfile
 from datetime import datetime
 import uuid
+import dlib
+import math
 
 # Page configuration
 st.set_page_config(
@@ -81,58 +83,135 @@ if 'cart_items' not in st.session_state:
 if 'current_item' not in st.session_state:
     st.session_state.current_item = None
 
-# Load cascade classifier with error handling
+# Initialize face detector and predictor
 @st.cache_resource
-def load_cascade_classifier():
+def load_face_detector():
     try:
-        # Try multiple possible paths for the cascade file
-        cascade_paths = [
-            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml',
-            'haarcascade_frontalface_default.xml',
-            './haarcascade_frontalface_default.xml'
+        # Try to load dlib's face detector and shape predictor
+        detector = dlib.get_frontal_face_detector()
+        
+        # Try multiple possible paths for the shape predictor
+        predictor_paths = [
+            'shape_predictor_68_face_landmarks.dat',
+            'data/shape_predictor_68_face_landmarks.dat',
+            './data/shape_predictor_68_face_landmarks.dat'
         ]
         
-        face_cascade = None
-        for path in cascade_paths:
+        for path in predictor_paths:
             if os.path.exists(path):
-                face_cascade = cv2.CascadeClassifier(path)
-                if not face_cascade.empty():
-                    st.success(f"Loaded cascade from: {path}")
-                    return face_cascade
+                predictor = dlib.shape_predictor(path)
+                st.success(f"Loaded shape predictor from: {path}")
+                return detector, predictor
         
-        # If not found, use alternative method
-        st.warning("Haar cascade file not found. Using alternative detection method.")
-        return None
+        # Fallback to Haar cascade if dlib's model is not found
+        cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        if os.path.exists(cascade_path):
+            face_cascade = cv2.CascadeClassifier(cascade_path)
+            st.warning("Using Haar cascade as fallback. For better results, download shape_predictor_68_face_landmarks.dat")
+            return face_cascade, None
+        
+        st.error("No face detection model found. Please ensure shape_predictor_68_face_landmarks.dat is in the data/ directory.")
+        return None, None
+        
     except Exception as e:
-        st.error(f"Error loading cascade classifier: {str(e)}")
-        return None
+        st.error(f"Error loading face detector: {str(e)}")
+        return None, None
+
+def get_face_landmarks(face_detector, predictor, frame, face_rect=None):
+    """Detect facial landmarks using dlib's predictor"""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    
+    # If using dlib's HOG detector
+    if predictor is not None:
+        if face_rect is None:
+            # If no face_rect provided, detect faces
+            faces = face_detector(gray, 1)
+            if len(faces) == 0:
+                return None
+            face_rect = faces[0]  # Use first detected face
+            
+        # Get landmarks
+        landmarks = predictor(gray, face_rect)
+        return [(p.x, p.y) for p in landmarks.parts()]
+    
+    # Fallback for Haar cascade
+    elif face_rect is not None:
+        x, y, w, h = face_rect
+        # Return approximate landmark positions based on face rectangle
+        return [
+            (x + w//2, y + h//3),       # Nose tip
+            (x, y + h//3),              # Left eye
+            (x + w, y + h//3),          # Right eye
+            (x + w//4, y + h//2),       # Left mouth corner
+            (x + 3*w//4, y + h//2),     # Right mouth corner
+            (x + w//2, y),              # Forehead
+            (x + w//2, y + h)           # Chin
+        ]
+    
+    return None
+
+def calculate_face_angle(landmarks):
+    """Calculate the rotation angle of the face based on eye positions"""
+    if len(landmarks) < 3:  # Need at least eyes and nose
+        return 0
+    
+    # Use eye positions to determine angle
+    left_eye = np.array(landmarks[0] if isinstance(landmarks[0], (tuple, list)) else (landmarks[0].x, landmarks[0].y))
+    right_eye = np.array(landmarks[1] if isinstance(landmarks[1], (tuple, list)) else (landmarks[1].x, landmarks[1].y))
+    
+    # Calculate angle between eyes
+    dY = right_eye[1] - left_eye[1]
+    dX = right_eye[0] - left_eye[0]
+    angle = np.degrees(np.arctan2(dY, dX))
+    
+    return angle
+
+def rotate_image(image, angle, center=None, scale=1.0):
+    """Rotate an image around its center"""
+    (h, w) = image.shape[:2]
+    if center is None:
+        center = (w // 2, h // 2)
+    
+    # Perform the rotation and return the image
+    M = cv2.getRotationMatrix2D(center, angle, scale)
+    rotated = cv2.warpAffine(image, M, (w, h))
+    return rotated
 
 # Process frame for virtual try-on
 def process_frame(frame, item_path):
-    # Load cascade classifier
-    face_cascade = load_cascade_classifier()
+    # Load detector and predictor
+    detector, predictor = load_face_detector()
+    if detector is None:
+        return frame
     
     # Convert to grayscale for detection
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
     # Detect faces
-    faces = []
-    if face_cascade is not None and not face_cascade.empty():
-        faces = face_cascade.detectMultiScale(
-            gray,
-            scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(30, 30)
-        )
-    else:
-        # Fallback: use a simple face detection approximation
-        height, width = gray.shape
-        faces = [(int(width/4), int(height/4), int(width/2), int(height/3))]
+    if predictor is not None:  # Using dlib
+        faces = detector(gray, 1)
+        if len(faces) == 0:
+            return None
+        face_rect = faces[0]  # Use first detected face
+        landmarks = get_face_landmarks(detector, predictor, frame, face_rect)
+        
+        # Get face bounding box from landmarks
+        if landmarks:
+            x = min(p[0] for p in landmarks)
+            y = min(p[1] for p in landmarks)
+            w = max(p[0] for p in landmarks) - x
+            h = max(p[1] for p in landmarks) - y
+        else:
+            # Fallback to face rectangle
+            x, y, w, h = face_rect.left(), face_rect.top(), face_rect.width(), face_rect.height()
+    else:  # Using Haar cascade
+        faces = detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+        if len(faces) == 0:
+            return None
+        x, y, w, h = faces[0]
+        landmarks = get_face_landmarks(detector, predictor, frame, (x, y, w, h))
     
-    if len(faces) == 0:
-        return None
-    
-    # Load the item image
+    # Load the item image with transparency
     if not os.path.exists(item_path):
         st.error(f"Item image not found: {item_path}")
         return frame
@@ -142,103 +221,166 @@ def process_frame(frame, item_path):
         st.error(f"Failed to load item image: {item_path}")
         return frame
     
-    # Process each detected face
+    # Process the frame
     result = frame.copy()
-    for (x, y, w, h) in faces:
-        # Determine placement based on item type
-        if "necklace" in item_path.lower():
-            # Place necklace below face
+    
+    # Calculate face angle for rotation compensation
+    face_angle = calculate_face_angle(landmarks) if landmarks else 0
+    
+    # Determine placement based on item type
+    if "necklace" in item_path.lower():
+        # Place necklace based on chin and shoulder landmarks
+        if landmarks and len(landmarks) > 8:  # Ensure we have enough landmarks
+            chin = landmarks[8] if len(landmarks) > 8 else (x + w//2, y + h)
+            neck_base = (chin[0], chin[1] + int(h * 0.2))
+            item_width = int(w * 1.5)
+            item_height = int(h * 0.4)
+            x_offset = neck_base[0] - item_width // 2
+            y_offset = neck_base[1]
+        else:
             item_height = int(h * 0.5)
             item_width = int(w * 1.5)
             y_offset = int(y + h * 0.8)
             x_offset = int(x - w * 0.25)
-        elif "earring" in item_path.lower():
-            # Place earrings on sides of face
+            
+        item_resized = cv2.resize(item_img, (item_width, item_height))
+        result = overlay_image(result, item_resized, x_offset, y_offset, angle=-face_angle)
+        
+    elif "earring" in item_path.lower():
+        # Place earrings based on ear landmarks
+        if landmarks and len(landmarks) > 15:  # Ensure we have ear landmarks
+            # Left ear (landmark 0 is left side of face)
+            left_ear = (max(0, x - w//4), y + h//3)
+            # Right ear (landmark 16 is right side of face)
+            right_ear = (min(frame.shape[1], x + w + w//4), y + h//3)
+            
+            item_height = int(h * 0.3)
+            item_width = int(h * 0.2)
+            
+            # Left earring
+            left_earring = cv2.resize(item_img, (item_width, item_height))
+            result = overlay_image(result, left_earring, 
+                                 left_ear[0] - item_width//2, 
+                                 left_ear[1] - item_height//2,
+                                 angle=-face_angle)
+            
+            # Right earring (flipped)
+            right_earring = cv2.flip(cv2.resize(item_img, (item_width, item_height)), 1)
+            result = overlay_image(result, right_earring, 
+                                 right_ear[0] - item_width//2, 
+                                 right_ear[1] - item_height//2,
+                                 angle=-face_angle)
+        else:
+            # Fallback to simple positioning
             item_height = int(h * 0.3)
             item_width = int(w * 0.3)
-            # Left ear
-            y_offset_left = int(y + h * 0.3)
-            x_offset_left = int(x - w * 0.3)
-            # Right ear
-            y_offset_right = int(y + h * 0.3)
-            x_offset_right = int(x + w * 0.9)
+            y_offset = int(y + h * 0.3)
             
-            # Resize and place left earring
+            # Left earring
+            x_offset_left = max(0, x - w//3)
             item_resized = cv2.resize(item_img, (item_width, item_height))
-            result = overlay_image(result, item_resized, x_offset_left, y_offset_left)
+            result = overlay_image(result, item_resized, x_offset_left, y_offset, angle=-face_angle)
             
-            # For right earring, flip horizontally
+            # Right earring (flipped)
+            x_offset_right = min(frame.shape[1] - item_width, x + w - w//3)
             item_flipped = cv2.flip(item_resized, 1)
-            result = overlay_image(result, item_flipped, x_offset_right, y_offset_right)
+            result = overlay_image(result, item_flipped, x_offset_right, y_offset, angle=-face_angle)
+    
+    elif any(x in item_path.lower() for x in ["tiara", "goggle", "sunglass", "glasses"]):
+        # Place on top of head/eyes
+        if landmarks and len(landmarks) > 27:  # Check for eye landmarks
+            # Position between eyes (landmarks 39 and 42)
+            left_eye = landmarks[39] if isinstance(landmarks[39], (tuple, list)) else (landmarks[39].x, landmarks[39].y)
+            right_eye = landmarks[42] if isinstance(landmarks[42], (tuple, list)) else (landmarks[42].x, landmarks[42].y)
             
-            continue  # Skip the normal placement for earrings
-        elif "tiara" in item_path.lower() or "goggle" in item_path.lower() or "sunglass" in item_path.lower():
-            # Place on top of head
+            eye_center = ((left_eye[0] + right_eye[0]) // 2, (left_eye[1] + right_eye[1]) // 2)
+            eye_distance = np.sqrt((right_eye[0] - left_eye[0])**2 + (right_eye[1] - left_eye[1])**2)
+            
+            item_width = int(eye_distance * 2.2)
+            item_height = int(item_width * 0.4)
+            
+            x_offset = eye_center[0] - item_width // 2
+            y_offset = eye_center[1] - item_height // 2 - int(eye_distance * 0.3)
+        else:
             item_height = int(h * 0.4)
             item_width = int(w * 1.2)
             y_offset = int(y - h * 0.3)
             x_offset = int(x - w * 0.1)
-        elif "top" in item_path.lower() or "shirt" in item_path.lower():
-            # Place on body
+        
+        item_resized = cv2.resize(item_img, (item_width, item_height))
+        result = overlay_image(result, item_resized, x_offset, y_offset, angle=-face_angle)
+    
+    elif any(x in item_path.lower() for x in ["top", "shirt", "t-shirt"]):
+        # Place on body below face
+        if landmarks and len(landmarks) > 8:  # Check for chin landmark
+            chin = landmarks[8] if isinstance(landmarks[8], (tuple, list)) else (landmarks[8].x, landmarks[8].y)
+            item_width = int(w * 1.8)
+            item_height = int(h * 1.5)
+            x_offset = chin[0] - item_width // 2
+            y_offset = chin[1]
+        else:
             item_height = int(h * 1.5)
             item_width = int(w * 1.5)
             y_offset = int(y + h * 1.2)
             x_offset = int(x - w * 0.25)
-        else:
-            # Default placement
-            item_height = int(h * 0.8)
-            item_width = int(w * 0.8)
-            y_offset = y
-            x_offset = x
         
-        # Resize item
         item_resized = cv2.resize(item_img, (item_width, item_height))
+        result = overlay_image(result, item_resized, x_offset, y_offset, angle=-face_angle)
+    
+    else:
+        # Default placement (centered on face)
+        item_height = int(h * 0.8)
+        item_width = int(w * 0.8)
+        y_offset = y
+        x_offset = x
         
-        # Overlay item on frame
-        result = overlay_image(result, item_resized, x_offset, y_offset)
+        item_resized = cv2.resize(item_img, (item_width, item_height))
+        result = overlay_image(result, item_resized, x_offset, y_offset, angle=-face_angle)
     
     return result
 
 # Helper function to overlay images with transparency
-def overlay_image(background, overlay, x, y):
-    bg_height, bg_width = background.shape[:2]
+def overlay_image(background, overlay, x, y, angle=0, scale=1.0):
+    """Overlay an image with transparency onto a background image with optional rotation and scaling"""
+    # If the overlay doesn't have an alpha channel, add one
+    if overlay.shape[2] < 4:
+        overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2BGRA)
     
-    # Ensure coordinates are within bounds
-    x = max(0, min(x, bg_width - 1))
-    y = max(0, min(y, bg_height - 1))
+    # Rotate and scale the overlay if needed
+    if angle != 0 or scale != 1.0:
+        h, w = overlay.shape[0], overlay.shape[1]
+        center = (w // 2, h // 2)
+        M = cv2.getRotationMatrix2D(center, angle, scale)
+        overlay = cv2.warpAffine(overlay, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
     
-    # Get dimensions of overlay image
-    h, w = overlay.shape[:2]
+    # Get the dimensions of the overlay
+    h, w = overlay.shape[0], overlay.shape[1]
     
-    # Calculate the region of interest
-    roi_x1 = x
-    roi_y1 = y
-    roi_x2 = min(x + w, bg_width)
-    roi_y2 = min(y + h, bg_height)
+    # Calculate the region of interest in the background
+    y1, y2 = max(0, y), min(background.shape[0], y + h)
+    x1, x2 = max(0, x), min(background.shape[1], x + w)
     
-    # If the overlay goes beyond the background, adjust
-    if roi_x1 >= bg_width or roi_y1 >= bg_height or roi_x2 <= 0 or roi_y2 <= 0:
+    # If the overlay is completely outside the background, return the original
+    if y1 >= y2 or x1 >= x2:
         return background
     
-    # Calculate the portion of the overlay to use
-    overlay_x1 = max(0, -x)
+    # Calculate the corresponding region in the overlay
     overlay_y1 = max(0, -y)
-    overlay_x2 = min(w, bg_width - x)
-    overlay_y2 = min(h, bg_height - y)
+    overlay_x1 = max(0, -x)
+    overlay_y2 = overlay_y1 + (y2 - y1)
+    overlay_x2 = overlay_x1 + (x2 - x1)
     
-    # Extract the ROI from the background
-    roi = background[roi_y1:roi_y2, roi_x1:roi_x2]
+    # Extract the alpha channel and create a mask
+    alpha = overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2, 3] / 255.0
+    alpha = np.expand_dims(alpha, axis=-1)  # Add channel dimension for broadcasting
+    alpha_inv = 1.0 - alpha
     
-    # Extract the relevant part of the overlay
-    overlay_portion = overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2]
-    
-    # Handle different overlay formats
-    if overlay_portion.shape[2] == 4:  # If overlay has alpha channel
-        # Split the overlay into color and alpha channels
-        overlay_colors = overlay_portion[:, :, :3]
-        alpha_mask = overlay_portion[:, :, 3:] / 255.0
-        
-        # Blend the images
+    # Blend the images using the alpha channel
+    for c in range(0, 3):
+        background[y1:y2, x1:x2, c] = (
+            alpha.squeeze() * overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2, c] +
+            alpha_inv.squeeze() * background[y1:y2, x1:x2, c]
+        )
         roi = (overlay_colors * alpha_mask + roi * (1 - alpha_mask)).astype(np.uint8)
     else:
         # If no alpha channel, simply overlay

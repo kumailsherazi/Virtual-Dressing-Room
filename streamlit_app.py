@@ -104,39 +104,53 @@ def load_face_detector():
         return None
 
 def get_face_landmarks(face_detector, frame, face_rect=None):
-    """Detect facial landmarks using OpenCV's Haar cascade"""
-    if frame is None or frame.size == 0 or face_detector is None:
-        return None
-        
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    
-    # If no face_rect provided, detect faces
+    """Detect facial landmarks using OpenCV's Haar cascade with improved accuracy"""
     if face_rect is None:
+        # If no face rectangle is provided, detect faces first
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = face_detector.detectMultiScale(
             gray,
-            scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(30, 30)
+            scaleFactor=1.05,  # More precise detection
+            minNeighbors=6,    # More strict face detection
+            minSize=(50, 50)   # Larger minimum face size for better accuracy
         )
         if len(faces) == 0:
             return None
-        x, y, w, h = faces[0]  # Use first detected face
+        x, y, w, h = faces[0]
     else:
-        if isinstance(face_rect, tuple) and len(face_rect) == 4:  # (x,y,w,h) format
-            x, y, w, h = face_rect
-        else:
-            return None
+        x, y, w, h = face_rect
     
-    # Return approximate landmark positions based on face rectangle
-    return [
-        (x + w//2, y + h//3),       # Nose tip
-        (x + w//4, y + h//3),       # Left eye
-        (x + 3*w//4, y + h//3),     # Right eye
-        (x + w//4, y + 2*h//3),     # Left mouth corner
-        (x + 3*w//4, y + 2*h//3),   # Right mouth corner
-        (x + w//2, y),              # Forehead
-        (x + w//2, y + h)           # Chin
-    ]
+    # Calculate more precise facial landmarks based on face rectangle
+    landmarks = []
+    
+    # Left eye (more precise position)
+    landmarks.append((x + int(w * 0.2), y + int(h * 0.3)))
+    
+    # Right eye (more precise position)
+    landmarks.append((x + int(w * 0.8), y + int(h * 0.3)))
+    
+    # Nose tip (more precise position)
+    landmarks.append((x + w // 2, y + h // 2))
+    
+    # Mouth corners (more precise position)
+    landmarks.append((x + int(w * 0.25), y + int(h * 0.65)))  # Left corner
+    landmarks.append((x + int(w * 0.75), y + int(h * 0.65)))  # Right corner
+    
+    # Chin (more precise position)
+    landmarks.append((x + w // 2, y + int(h * 0.9)))
+    
+    # Face boundaries (for better ear/accessory placement)
+    landmarks.append((max(0, x - w//10), y + h // 2))  # Left face boundary
+    landmarks.append((min(frame.shape[1], x + w + w//10), y + h // 2))  # Right face boundary
+    
+    # Forehead (for hat/headband placement)
+    landmarks.append((x + w // 2, max(0, y - h // 6)))
+    
+    # Cheek points (for better face shape estimation)
+    landmarks.append((x + int(w * 0.15), y + int(h * 0.5)))  # Left cheek
+    landmarks.append((x + int(w * 0.85), y + int(h * 0.5)))  # Right cheek
+    
+    return np.array(landmarks, dtype=np.int32)
 
 def calculate_face_angle(landmarks):
     """Calculate the rotation angle of the face based on eye positions"""
@@ -175,21 +189,32 @@ def process_frame(frame, item_path):
     # Convert to grayscale for detection
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
-    # Detect faces
+    # Equalize histogram to improve contrast
+    gray = cv2.equalizeHist(gray)
+    
+    # Detect faces with more precise parameters
     faces = face_detector.detectMultiScale(
         gray,
-        scaleFactor=1.1,
-        minNeighbors=5,
-        minSize=(30, 30)
+        scaleFactor=1.05,  # More precise scaling
+        minNeighbors=6,    # More strict face detection
+        minSize=(50, 50),  # Larger minimum face size
+        flags=cv2.CASCADE_SCALE_IMAGE
     )
     
     if len(faces) == 0:
         return frame  # Return original frame if no faces detected
-        
-    # Use first detected face
+    
+    # Find the largest face (most likely the main subject)
+    faces = sorted(faces, key=lambda x: x[2] * x[3], reverse=True)
     x, y, w, h = faces[0]
     
-    # Get approximate landmarks
+    # Expand the face rectangle slightly for better landmark detection
+    x = max(0, x - w//10)
+    y = max(0, y - h//10)
+    w = min(frame.shape[1] - x, w + w//5)
+    h = min(frame.shape[0] - y, h + h//5)
+    
+    # Get precise landmarks
     landmarks = get_face_landmarks(face_detector, frame, (x, y, w, h))
     
     # Load the item image with transparency

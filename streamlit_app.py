@@ -10,15 +10,6 @@ from datetime import datetime
 import uuid
 import math
 
-# Try to import dlib, but don't fail if it's not available
-try:
-    import dlib
-    DLIB_AVAILABLE = True
-except (ImportError, ModuleNotFoundError):
-    import warnings
-    warnings.warn("dlib not found. Falling back to basic face detection.")
-    DLIB_AVAILABLE = False
-
 # Page configuration
 st.set_page_config(
     page_title="✨ VFIT - AI Virtual Try-On",
@@ -91,92 +82,61 @@ if 'cart_items' not in st.session_state:
 if 'current_item' not in st.session_state:
     st.session_state.current_item = None
 
-# Initialize face detector and predictor
+# Initialize face detector
 @st.cache_resource
 def load_face_detector():
-    # First try to use dlib if available
-    if DLIB_AVAILABLE:
-        try:
-            detector = dlib.get_frontal_face_detector()
-            
-            # Try multiple possible paths for the shape predictor
-            predictor_paths = [
-                'shape_predictor_68_face_landmarks.dat',
-                'data/shape_predictor_68_face_landmarks.dat',
-                './data/shape_predictor_68_face_landmarks.dat'
-            ]
-            
-            for path in predictor_paths:
-                if os.path.exists(path):
-                    predictor = dlib.shape_predictor(path)
-                    st.success(f"Loaded dlib shape predictor from: {path}")
-                    return detector, predictor
-            
-            st.warning("dlib is available but shape predictor file not found. Falling back to basic detection.")
-            return detector, None
-            
-        except Exception as e:
-            st.warning(f"Error initializing dlib: {str(e)}. Falling back to OpenCV.")
-    
-    # Fallback to OpenCV's Haar cascade
     try:
-        cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        # Try to load the pre-trained Haar cascade classifier for face detection
+        cascade_path = os.path.join(cv2.data.haarcascades, 'haarcascade_frontalface_default.xml')
+        if not os.path.exists(cascade_path):
+            # Try alternative path
+            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            
         if os.path.exists(cascade_path):
             face_cascade = cv2.CascadeClassifier(cascade_path)
-            st.warning("Using OpenCV's Haar cascade for face detection. For better results, install dlib and download shape_predictor_68_face_landmarks.dat")
-            return face_cascade, None
+            return face_cascade
             
-        st.error("No face detection model found. Please install dlib or ensure haarcascade_frontalface_default.xml is available.")
-        return None, None
+        st.error("Face detection model not found. Please ensure haarcascade_frontalface_default.xml is available.")
+        return None
         
     except Exception as e:
         st.error(f"Error initializing face detector: {str(e)}")
-        return None, None
+        return None
 
-def get_face_landmarks(face_detector, predictor, frame, face_rect=None):
-    """Detect facial landmarks using dlib's predictor or fallback to basic face detection"""
-    if frame is None or frame.size == 0:
+def get_face_landmarks(face_detector, frame, face_rect=None):
+    """Detect facial landmarks using OpenCV's Haar cascade"""
+    if frame is None or frame.size == 0 or face_detector is None:
         return None
         
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
-    # If using dlib's predictor
-    if predictor is not None and DLIB_AVAILABLE:
-        try:
-            if face_rect is None:
-                # If no face_rect provided, detect faces
-                faces = face_detector(gray, 1)
-                if len(faces) == 0:
-                    return None
-                face_rect = faces[0]  # Use first detected face
-                
-            # Get landmarks
-            landmarks = predictor(gray, face_rect)
-            return [(p.x, p.y) for p in landmarks.parts()]
-        except Exception as e:
-            st.warning(f"Error getting dlib landmarks: {str(e)}")
-    
-    # Fallback for Haar cascade or when dlib fails
-    if face_rect is not None:
-        if isinstance(face_rect, tuple) and len(face_rect) == 4:  # Haar cascade format (x,y,w,h)
+    # If no face_rect provided, detect faces
+    if face_rect is None:
+        faces = face_detector.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(30, 30)
+        )
+        if len(faces) == 0:
+            return None
+        x, y, w, h = faces[0]  # Use first detected face
+    else:
+        if isinstance(face_rect, tuple) and len(face_rect) == 4:  # (x,y,w,h) format
             x, y, w, h = face_rect
-        elif hasattr(face_rect, 'left'):  # dlib rectangle
-            x, y, w, h = face_rect.left(), face_rect.top(), face_rect.width(), face_rect.height()
         else:
             return None
-            
-        # Return approximate landmark positions based on face rectangle
-        return [
-            (x + w//2, y + h//3),       # Nose tip
-            (x + w//4, y + h//3),        # Left eye
-            (x + 3*w//4, y + h//3),      # Right eye
-            (x + w//4, y + 2*h//3),      # Left mouth corner
-            (x + 3*w//4, y + 2*h//3),    # Right mouth corner
-            (x + w//2, y),               # Forehead
-            (x + w//2, y + h)            # Chin
-        ]
     
-    return None
+    # Return approximate landmark positions based on face rectangle
+    return [
+        (x + w//2, y + h//3),       # Nose tip
+        (x + w//4, y + h//3),       # Left eye
+        (x + 3*w//4, y + h//3),     # Right eye
+        (x + w//4, y + 2*h//3),     # Left mouth corner
+        (x + 3*w//4, y + 2*h//3),   # Right mouth corner
+        (x + w//2, y),              # Forehead
+        (x + w//2, y + h)           # Chin
+    ]
 
 def calculate_face_angle(landmarks):
     """Calculate the rotation angle of the face based on eye positions"""
@@ -207,37 +167,30 @@ def rotate_image(image, angle, center=None, scale=1.0):
 
 # Process frame for virtual try-on
 def process_frame(frame, item_path):
-    # Load detector and predictor
-    detector, predictor = load_face_detector()
-    if detector is None:
+    # Load face detector
+    face_detector = load_face_detector()
+    if face_detector is None:
         return frame
     
     # Convert to grayscale for detection
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
     # Detect faces
-    if predictor is not None:  # Using dlib
-        faces = detector(gray, 1)
-        if len(faces) == 0:
-            return None
-        face_rect = faces[0]  # Use first detected face
-        landmarks = get_face_landmarks(detector, predictor, frame, face_rect)
+    faces = face_detector.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(30, 30)
+    )
+    
+    if len(faces) == 0:
+        return frame  # Return original frame if no faces detected
         
-        # Get face bounding box from landmarks
-        if landmarks:
-            x = min(p[0] for p in landmarks)
-            y = min(p[1] for p in landmarks)
-            w = max(p[0] for p in landmarks) - x
-            h = max(p[1] for p in landmarks) - y
-        else:
-            # Fallback to face rectangle
-            x, y, w, h = face_rect.left(), face_rect.top(), face_rect.width(), face_rect.height()
-    else:  # Using Haar cascade
-        faces = detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-        if len(faces) == 0:
-            return None
-        x, y, w, h = faces[0]
-        landmarks = get_face_landmarks(detector, predictor, frame, (x, y, w, h))
+    # Use first detected face
+    x, y, w, h = faces[0]
+    
+    # Get approximate landmarks
+    landmarks = get_face_landmarks(face_detector, frame, (x, y, w, h))
     
     # Load the item image with transparency
     if not os.path.exists(item_path):

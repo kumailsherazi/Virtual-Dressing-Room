@@ -3,8 +3,5 @@ opencv-python-headless>=4.8.0.76
 numpy>=1.24.0
 imutils>=0.5.4
 Pillow>=10.0.0
-dlib>=19.24.0
-cmake>=3.26.0
+https://github.com/jloh02/dlib-wheels/raw/master/dlib-19.24.2-cp39-cp39-win_amd64.whl
 scipy>=1.10.0
-
-Pillow==10.0.0

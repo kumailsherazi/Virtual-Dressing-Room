@@ -154,19 +154,44 @@ def get_face_landmarks(face_detector, frame, face_rect=None):
 
 def calculate_face_angle(landmarks):
     """Calculate the rotation angle of the face based on eye positions"""
-    if len(landmarks) < 3:  # Need at least eyes and nose
-        return 0
+    if landmarks is None or len(landmarks) < 2:  # Need at least two points (eyes)
+        return 0.0
     
-    # Use eye positions to determine angle
-    left_eye = np.array(landmarks[0] if isinstance(landmarks[0], (tuple, list)) else (landmarks[0].x, landmarks[0].y))
-    right_eye = np.array(landmarks[1] if isinstance(landmarks[1], (tuple, list)) else (landmarks[1].x, landmarks[1].y))
+    try:
+        # Convert landmarks to numpy array if they aren't already
+        landmarks = np.array(landmarks)
+        
+        # Ensure we have the correct number of dimensions
+        if len(landmarks.shape) == 1:
+            if len(landmarks) >= 4:  # At least two points (x1,y1,x2,y2)
+                left_eye = landmarks[:2]
+                right_eye = landmarks[2:4]
+            else:
+                return 0.0
+        else:
+            # Get first two points (eyes) from landmarks
+            left_eye = landmarks[0]
+            right_eye = landmarks[1]
+        
+        # Ensure we have valid points
+        if (isinstance(left_eye, (list, tuple, np.ndarray)) and 
+            isinstance(right_eye, (list, tuple, np.ndarray)) and 
+            len(left_eye) >= 2 and len(right_eye) >= 2):
+            
+            # Convert to numpy arrays if they aren't already
+            left_eye = np.array(left_eye[:2])
+            right_eye = np.array(right_eye[:2])
+            
+            # Calculate angle between eyes
+            dY = float(right_eye[1] - left_eye[1])
+            dX = float(right_eye[0] - left_eye[0])
+            angle = np.degrees(np.arctan2(dY, dX))
+            return angle
+            
+    except Exception as e:
+        st.warning(f"Error calculating face angle: {str(e)}")
     
-    # Calculate angle between eyes
-    dY = right_eye[1] - left_eye[1]
-    dX = right_eye[0] - left_eye[0]
-    angle = np.degrees(np.arctan2(dY, dX))
-    
-    return angle
+    return 0.0
 
 def rotate_image(image, angle, center=None, scale=1.0):
     """Rotate an image around its center"""

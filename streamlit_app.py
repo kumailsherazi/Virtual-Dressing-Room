@@ -7,18 +7,15 @@ from pathlib import Path
 from PIL import Image
 import tempfile
 from datetime import datetime
-import uuid
-import math
+import time
 
-# Page configuration
 st.set_page_config(
-    page_title="✨ VFIT - AI Virtual Try-On",
-    page_icon="✨",
+    page_title="VFIT - AI Virtual Try-On",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for beautiful styling
 st.markdown("""
 <style>
     .main-header {
@@ -67,283 +64,188 @@ st.markdown("""
         color: white;
         border: none;
     }
-    
-    .uploaded-item {
-        border: 2px solid #e2e8f0;
-        border-radius: 10px;
-        padding: 1rem;
-        margin-bottom: 1rem;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state
 if 'page' not in st.session_state:
     st.session_state.page = 'home'
 if 'selected_item' not in st.session_state:
     st.session_state.selected_item = None
 if 'processed_image' not in st.session_state:
     st.session_state.processed_image = None
-if 'cart_items' not in st.session_state:
-    st.session_state.cart_items = []
-if 'current_item' not in st.session_state:
-    st.session_state.current_item = None
-if 'uploaded_items' not in st.session_state:
-    st.session_state.uploaded_items = []
-if 'last_processed_item' not in st.session_state:
-    st.session_state.last_processed_item = None
 
-# Initialize face detector
 @st.cache_resource
-def load_face_detector():
+def load_cascade_classifier():
     try:
-        # Try to load the pre-trained Haar cascade classifier for face detection
-        cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-        
-        if os.path.exists(cascade_path):
-            face_cascade = cv2.CascadeClassifier(cascade_path)
-            if not face_cascade.empty():
-                return face_cascade
-        
-        # Try alternative paths
         cascade_paths = [
+            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml',
             'haarcascade_frontalface_default.xml',
-            './haarcascade_frontalface_default.xml',
-            'data/haarcascade_frontalface_default.xml'
+            './haarcascade_frontalface_default.xml'
         ]
         
+        face_cascade = None
         for path in cascade_paths:
             if os.path.exists(path):
                 face_cascade = cv2.CascadeClassifier(path)
                 if not face_cascade.empty():
+                    st.success(f"Loaded cascade from: {path}")
                     return face_cascade
         
-        # If no cascade file is found, return None
+        st.warning("Haar cascade file not found. Using alternative detection method.")
         return None
-        
     except Exception as e:
-        st.error(f"Error initializing face detector: {str(e)}")
+        st.error(f"Error loading cascade classifier: {str(e)}")
         return None
 
-# Simple face detection function
-def detect_faces(frame, face_detector):
-    if face_detector is None:
-        # Fallback: use a simple face detection approximation
-        height, width = frame.shape[:2]
-        return [(int(width/4), int(height/4), int(width/2), int(height/3))]
+def process_frame(frame, item_path): 
+    face_cascade = load_cascade_classifier()
     
-    # Convert to grayscale for detection
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
-    # Detect faces
-    faces = face_detector.detectMultiScale(
-        gray,
-        scaleFactor=1.1,
-        minNeighbors=5,
-        minSize=(30, 30),
-        flags=cv2.CASCADE_SCALE_IMAGE
-    )
-    
-    return faces
-
-# Process frame for virtual try-on
-def process_frame(frame, item_path):
-    # Load face detector
-    face_detector = load_face_detector()
-    
-    # Detect faces
-    faces = detect_faces(frame, face_detector)
+    faces = []
+    if face_cascade is not None and not face_cascade.empty():
+        faces = face_cascade.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(30, 30)
+        )
+    else:
+        height, width = gray.shape
+        faces = [(int(width/4), int(height/4), int(width/2), int(height/3))]
     
     if len(faces) == 0:
-        return None  # Return None if no faces detected
+        return None
     
-    # Find the largest face (most likely the main subject)
-    faces = sorted(faces, key=lambda x: x[2] * x[3], reverse=True)
-    x, y, w, h = faces[0]
-    
-    # Load the item image with transparency
     if not os.path.exists(item_path):
-        # Create a placeholder item
-        item_img = np.zeros((100, 100, 4), dtype=np.uint8)
-        cv2.rectangle(item_img, (10, 10), (90, 90), (255, 0, 0, 255), -1)
-    else:
-        item_img = cv2.imread(item_path, cv2.IMREAD_UNCHANGED)
-        if item_img is None:
-            # Create a placeholder item if loading fails
-            item_img = np.zeros((100, 100, 4), dtype=np.uint8)
-            cv2.rectangle(item_img, (10, 10), (90, 90), (255, 0, 0, 255), -1)
+        st.error(f"Item image not found: {item_path}")
+        return frame
     
-    # Process the frame
+    item_img = cv2.imread(item_path, cv2.IMREAD_UNCHANGED)
+    if item_img is None:
+        st.error(f"Failed to load item image: {item_path}")
+        return frame
+    
     result = frame.copy()
-    
-    # Determine placement based on item type
-    if "necklace" in item_path.lower():
-        item_height = int(h * 0.5)
-        item_width = int(w * 1.5)
-        y_offset = int(y + h * 0.8)
-        x_offset = int(x - w * 0.25)
-        
-    elif "earring" in item_path.lower():
-        item_height = int(h * 0.3)
-        item_width = int(w * 0.3)
-        y_offset = int(y + h * 0.3)
-        
-        # Left earring
-        x_offset_left = max(0, x - w//3)
-        item_resized = cv2.resize(item_img, (item_width, item_height))
-        result = overlay_image(result, item_resized, x_offset_left, y_offset)
-        
-        # Right earring (flipped)
-        x_offset_right = min(frame.shape[1] - item_width, x + w - w//3)
-        item_flipped = cv2.flip(item_resized, 1)
-        result = overlay_image(result, item_flipped, x_offset_right, y_offset)
-        return result
-    
-    elif any(x in item_path.lower() for x in ["tiara", "goggle", "sunglass", "glasses"]):
-        item_height = int(h * 0.4)
-        item_width = int(w * 1.2)
-        y_offset = int(y - h * 0.3)
-        x_offset = int(x - w * 0.1)
-    
-    elif any(x in item_path.lower() for x in ["top", "shirt", "t-shirt"]):
-        item_height = int(h * 1.5)
-        item_width = int(w * 1.5)
-        y_offset = int(y + h * 1.2)
-        x_offset = int(x - w * 0.25)
-    
-    else:
-        # Default placement (centered on face)
-        item_height = int(h * 0.8)
-        item_width = int(w * 0.8)
-        y_offset = y
-        x_offset = x
-    
-    # Resize and apply the item
-    item_resized = cv2.resize(item_img, (item_width, item_height))
-    result = overlay_image(result, item_resized, x_offset, y_offset)
+    for (x, y, w, h) in faces:
+        if "necklace" in item_path.lower():
+            item_height = int(h * 0.5)
+            item_width = int(w * 1.5)
+            y_offset = int(y + h * 0.8)
+            x_offset = int(x - w * 0.25)
+
+            item_resized = cv2.resize(item_img, (item_width, item_height))
+            result = overlay_image(result, item_resized, x_offset, y_offset)
+
+        elif "earring" in item_path.lower():
+            item_height = int(h * 0.3)
+            item_width = int(w * 0.3)
+
+       
+            y_offset_left = int(y + h * 0.3)
+            x_offset_left = int(x - w * 0.3)
+          
+            y_offset_right = int(y + h * 0.3)
+            x_offset_right = int(x + w * 0.9)
+            
+            item_resized = cv2.resize(item_img, (item_width, item_height))
+            result = overlay_image(result, item_resized, x_offset_left, y_offset_left)
+            
+           
+            item_flipped = cv2.flip(item_resized, 1)
+            result = overlay_image(result, item_flipped, x_offset_right, y_offset_right)
+
+            
+            continue
+
+        elif "glasses" in item_path.lower() or "goggle" in item_path.lower() or "sunglass" in item_path.lower():
+           
+            gh, gw = item_img.shape[:2]
+            scale = w / gw
+            item_resized = cv2.resize(item_img, (int(gw * scale), int(gh * scale)))
+
+            rw, rh = item_resized.shape[1], item_resized.shape[0]
+            x_offset = x + (w // 2) - (rw // 2)
+            y_offset = y + int(h * 0.4) - (rh // 2)
+
+            result = overlay_image(result, item_resized, x_offset, y_offset)
+
+        elif "tiara" in item_path.lower() or "crown" in item_path.lower():
+            
+            item_height = int(h * 0.4)
+            item_width = int(w * 1.2)
+            y_offset = int(y - h * 0.3)
+            x_offset = int(x - w * 0.1)
+
+            item_resized = cv2.resize(item_img, (item_width, item_height))
+            result = overlay_image(result, item_resized, x_offset, y_offset)
+
+        elif "top" in item_path.lower() or "shirt" in item_path.lower():
+            
+            item_width = int(w * 2.5)
+            item_height = int(h * 3.0)
+            x_offset = int(x - w * 0.7)
+            y_offset = int(y + h * 1.0)  
+
+            item_resized = cv2.resize(item_img, (item_width, item_height))
+            result = overlay_image(result, item_resized, x_offset, y_offset)
+
+        else:
+          
+            item_height = int(h * 0.8)
+            item_width = int(w * 0.8)
+            y_offset = y
+            x_offset = x
+
+            item_resized = cv2.resize(item_img, (item_width, item_height))
+            result = overlay_image(result, item_resized, x_offset, y_offset)
     
     return result
 
-# Helper function to overlay images with transparency
 def overlay_image(background, overlay, x, y):
-    """Overlay an image with transparency onto a background image"""
-    try:
-        # Check if images are valid
-        if overlay is None or background is None:
-            return background
-            
-        # Convert background to BGR if it's grayscale
-        if len(background.shape) == 2:
-            background = cv2.cvtColor(background, cv2.COLOR_GRAY2BGR)
-        
-        # Ensure overlay has 4 channels (BGRA)
-        if len(overlay.shape) < 3 or overlay.shape[2] < 4:
-            if len(overlay.shape) == 2:
-                # Convert grayscale to BGRA
-                overlay = cv2.cvtColor(overlay, cv2.COLOR_GRAY2BGRA)
-            else:
-                # Convert BGR to BGRA
-                overlay = cv2.cvtColor(overlay, cv2.COLOR_BGR2BGRA)
-        
-        # Get the dimensions of the overlay
-        h, w = overlay.shape[0], overlay.shape[1]
-        
-        # Calculate the region of interest in the background
-        y1, y2 = max(0, y), min(background.shape[0], y + h)
-        x1, x2 = max(0, x), min(background.shape[1], x + w)
-        
-        # If the overlay is completely outside the background, return the original
-        if y1 >= y2 or x1 >= x2:
-            return background
-        
-        # Calculate the corresponding region in the overlay
-        overlay_y1 = max(0, -y)
-        overlay_x1 = max(0, -x)
-        overlay_y2 = overlay_y1 + (y2 - y1)
-        overlay_x2 = overlay_x1 + (x2 - x1)
-        
-        # Extract the alpha channel and create a mask
-        alpha = overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2, 3] / 255.0
-        alpha = np.expand_dims(alpha, axis=-1)
-        alpha_inv = 1.0 - alpha
-        
-        # Ensure background has 3 channels (BGR)
-        if len(background.shape) == 2:
-            background = cv2.cvtColor(background, cv2.COLOR_GRAY2BGR)
-        
-        # Blend the images using the alpha channel
-        for c in range(0, 3):
-            background[y1:y2, x1:x2, c] = (
-                alpha.squeeze() * overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2, c] +
-                alpha_inv.squeeze() * background[y1:y2, x1:x2, c]
-            )
-        
-        return background
-        
-    except Exception as e:
-        return background
-
-# Function to save uploaded file
-def save_uploaded_file(uploaded_file, category):
-    try:
-        # Create directory if it doesn't exist
-        os.makedirs(f"static/images/uploaded_{category}", exist_ok=True)
-        
-        # Generate a unique filename to avoid conflicts
-        file_ext = os.path.splitext(uploaded_file.name)[1]
-        unique_filename = f"{uuid.uuid4()}{file_ext}"
-        file_path = os.path.join(f"static/images/uploaded_{category}", unique_filename)
-        
-        # Save the file
-        with open(file_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        return file_path, unique_filename
-    except Exception as e:
-        st.error(f"Error saving file: {e}")
-        return None, None
-
-# Function to delete uploaded file
-def delete_uploaded_file(file_path):
-    try:
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            return True
-        return False
-    except Exception as e:
-        st.error(f"Error deleting file: {e}")
-        return False
-
-# Sidebar navigation
-st.sidebar.title("✨ VFIT")
-
-# Upload new item section in sidebar
-with st.sidebar.expander("➕ Add New Item"):
-    st.subheader("Upload New Item")
-    item_name = st.text_input("Item Name")
-    item_category = st.selectbox("Category", ["Necklaces", "Earrings", "Tiaras", "Goggles", "Tops"])
-    uploaded_file = st.file_uploader("Upload Item Image", type=["png", "jpg", "jpeg"])
+    bg_height, bg_width = background.shape[:2]
     
-    if st.button("Add to Wardrobe") and uploaded_file is not None and item_name:
-        file_path, filename = save_uploaded_file(uploaded_file, item_category.lower())
-        if file_path and filename:
-            st.success(f"Successfully added {item_name} to {item_category} category!")
-            # Add to session state to show immediately
-            st.session_state.uploaded_items.append({
-                'name': item_name,
-                'category': item_category,
-                'path': file_path,
-                'filename': filename,
-                'id': str(uuid.uuid4())
-            })
-        else:
-            st.error("Failed to save the item. Please try again.")
+    x = max(0, min(x, bg_width - 1))
+    y = max(0, min(y, bg_height - 1))
+    
+    h, w = overlay.shape[:2]
+    
+    
+    roi_x1 = x
+    roi_y1 = y
+    roi_x2 = min(x + w, bg_width)
+    roi_y2 = min(y + h, bg_height)
+    
+    if roi_x1 >= bg_width or roi_y1 >= bg_height or roi_x2 <= 0 or roi_y2 <= 0:
+        return background
+    
+    overlay_x1 = max(0, -x)
+    overlay_y1 = max(0, -y)
+    overlay_x2 = min(w, bg_width - x)
+    overlay_y2 = min(h, bg_height - y)
+    
+    roi = background[roi_y1:roi_y2, roi_x1:roi_x2]
+    
+    overlay_portion = overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2]
+    
+    if overlay_portion.shape[2] == 4:  
+        overlay_colors = overlay_portion[:, :, :3]
+        alpha_mask = overlay_portion[:, :, 3:] / 255.0
+        
+        roi = (overlay_colors * alpha_mask + roi * (1 - alpha_mask)).astype(np.uint8)
+    else:
+        roi = overlay_portion
+    
+    background[roi_y1:roi_y2, roi_x1:roi_x2] = roi
+    
+    return background
 
+st.sidebar.title(" VFIT")
 page = st.sidebar.selectbox(
     "Navigate",
     ["🏠 Home", "👔 Wardrobe", "📸 Try-On", "ℹ️ About"]
 )
 
-# Update session state based on selection
 if page == "🏠 Home":
     st.session_state.page = 'home'
 elif page == "👔 Wardrobe":
@@ -353,42 +255,82 @@ elif page == "📸 Try-On":
 elif page == "ℹ️ About":
     st.session_state.page = 'about'
 
-# Home Page
+import base64
+
+def get_base64_of_bin_file(bin_file):
+    if not os.path.exists(bin_file):
+        return None
+    with open(bin_file, 'rb') as f:
+        data = f.read()
+    return base64.b64encode(data).decode()
+
+wardrobe_file = "static/images/wordrobe.png"
+profile_file = "static/images/personbg.png"
+tryon_file   = "static/images/tryon.png"
+
+wardrobe_bg = get_base64_of_bin_file(wardrobe_file)
+profile_bg  = get_base64_of_bin_file(profile_file)
+tryon_bg    = get_base64_of_bin_file(tryon_file)
+
+CARD_STYLE = """
+    text-align:center; 
+    padding:15px; 
+    border:1px solid #ddd; 
+    border-radius:12px; 
+    width:220px; 
+    height:180px; 
+    margin:auto; 
+    display:flex; 
+    flex-direction:column; 
+    justify-content:center;
+    box-shadow:0px 4px 6px rgba(0,0,0,0.1);
+"""
+
 if st.session_state.page == 'home':
     st.markdown('<h1 class="main-header">Welcome to VFIT</h1>', unsafe_allow_html=True)
     st.markdown('<p class="subtitle">Your AI-powered virtual try-on experience. Upload wardrobe items and profile photos, then create stunning virtual try-ons with the power of AI.</p>', unsafe_allow_html=True)
-    
-    # Stats section
+
     col1, col2, col3 = st.columns(3)
-    
+
+    # Wardrobe Card
     with col1:
-        st.markdown("""
-        <div class="stat-card">
-            <h2>👔</h2>
-            <h3>Wardrobe Items</h3>
-            <h2>50+</h2>
-        </div>
-        """, unsafe_allow_html=True)
-    
+        style = CARD_STYLE
+        if wardrobe_bg:
+            style += f"background-image:url('data:image/png;base64,{wardrobe_bg}');background-size:cover;background-position:center;"
+        st.markdown(
+            f"""
+            <div class="stat-card" style="{style}"></div>
+            <p style="text-align:center; font-weight:bold; margin-top:8px;">Upload Wardrobe Items</p>
+            """,
+            unsafe_allow_html=True
+        )
+
     with col2:
-        st.markdown("""
-        <div class="stat-card">
-            <h2>📸</h2>
-            <h3>Profile Photos</h3>
-            <h2>Ready</h2>
-        </div>
-        """, unsafe_allow_html=True)
-    
+        style = CARD_STYLE
+        if profile_bg:
+            style += f"background-image:url('data:image/png;base64,{profile_bg}');background-size:cover;background-position:center;"
+        st.markdown(
+            f"""
+            <div class="stat-card" style="{style}"></div>
+            <p style="text-align:center; font-weight:bold; margin-top:8px;">Take Photo</p>
+            """,
+            unsafe_allow_html=True
+        )
+
     with col3:
-        st.markdown("""
-        <div class="stat-card">
-            <h2>✨</h2>
-            <h3>Virtual Try-Ons</h3>
-            <h2>Unlimited</h2>
-        </div>
-        """, unsafe_allow_html=True)
+        style = CARD_STYLE
+        if tryon_bg:
+            style += f"background-image:url('data:image/png;base64,{tryon_bg}');background-size:cover;background-position:center;"
+        st.markdown(
+            f"""
+            <div class="stat-card" style="{style}"></div>
+            <p style="text-align:center; font-weight:bold; margin-top:8px;">Virtual Try-Ons</p>
+            """,
+            unsafe_allow_html=True
+        )
+
+
     
-    # Getting Started section
     st.markdown("## Getting Started")
     
     st.markdown("""
@@ -412,28 +354,79 @@ if st.session_state.page == 'home':
     </div>
     """, unsafe_allow_html=True)
     
-    # CTA buttons
+    st.markdown("### Get Started")
     col1, col2 = st.columns(2)
+
     with col1:
-        if st.button("🎯 Start with Try-On", type="primary", use_container_width=True, key="home_tryon_btn"):
-            st.session_state.page = 'tryon'
-            st.rerun()
-    
-    with col2:
-        if st.button("👔 Browse Wardrobe", use_container_width=True, key="home_wardrobe_btn"):
-            st.session_state.page = 'wardrobe'
+        if st.button("🎯 Start with Try-On", use_container_width=True, key="home_tryon_btn"):
+            st.session_state.page = "tryon"
             st.rerun()
 
-# Wardrobe Page
+    with col2:
+        if st.button("👔 Browse Wardrobe", use_container_width=True, key="home_wardrobe_btn"):
+            st.session_state.page = "wardrobe"
+            st.rerun()
+
 elif st.session_state.page == 'wardrobe':
     st.markdown('<h1 class="main-header">Virtual Wardrobe</h1>', unsafe_allow_html=True)
     st.markdown('<p class="subtitle">Browse and select from our collection of virtual clothing items</p>', unsafe_allow_html=True)
     
-    # Create necessary directories if they don't exist
-    os.makedirs('static', exist_ok=True)
-    os.makedirs('static/images', exist_ok=True)
     
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["👗 Necklaces", "👂 Earrings", "👑 Tiaras", "👕 T-shirts", "👓 Goggles", "📤 My Uploads"])
+    os.makedirs('static', exist_ok=True)
+    os.makedirs('static/uploads', exist_ok=True)
+    
+    uploaded_items_file = 'static/uploads/uploaded_items.json'
+    if not os.path.exists(uploaded_items_file):
+        with open(uploaded_items_file, 'w') as f:
+            json.dump([], f)
+    
+   
+    try:
+        with open(uploaded_items_file, 'r') as f:
+            uploaded_items = json.load(f)
+    except (json.JSONDecodeError, FileNotFoundError):
+        uploaded_items = []
+    
+    
+    with st.sidebar.expander("📤 Upload New Item"):
+        with st.form("upload_form"):
+            st.write("### Add New Item to Wardrobe")
+            item_name = st.text_input("Item Name", "")
+            item_category = st.selectbox(
+                "Category",
+                ["Necklace", "Earring", "Tiara", "Hat", "Goggle", "T-shirt"]
+            )
+            uploaded_file = st.file_uploader("Choose an image...", type=["png", "jpg", "jpeg"])
+            
+            if st.form_submit_button("Upload Item"):
+                if uploaded_file is not None and item_name.strip() != "":
+                 
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = f"{item_category.lower()}_{timestamp}_{uploaded_file.name}"
+                    filepath = os.path.join('static', 'uploads', filename)
+                    
+                    
+                    with open(filepath, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    
+                    
+                    new_item = {
+                        'name': item_name,
+                        'category': item_category,
+                        'path': filepath,
+                        'date_added': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    uploaded_items.append(new_item)
+                    
+                    
+                    with open(uploaded_items_file, 'w') as f:
+                        json.dump(uploaded_items, f)
+                    
+                    st.success(f"Successfully uploaded {item_name} to your wardrobe!")
+                else:
+                    st.warning("Please provide both an item name and select an image file.")
+    
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Jewellery", "Earrings", "Hats & Tiaras", "T-shirts", "Glasses", "My Uploads"])
     
     with tab1:
         st.markdown('<h2 class="category-header">Necklaces</h2>', unsafe_allow_html=True)
@@ -448,9 +441,9 @@ elif st.session_state.page == 'wardrobe':
         
         for i, (name, path) in enumerate(necklaces):
             with cols[i % 3]:
-                # Create placeholder if image doesn't exist
+                
                 if not os.path.exists(path):
-                    # Create a placeholder image
+                    
                     placeholder = np.zeros((200, 200, 3), dtype=np.uint8)
                     cv2.rectangle(placeholder, (50, 50), (150, 150), (0, 255, 255), -1)
                     cv2.putText(placeholder, name, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
@@ -468,7 +461,7 @@ elif st.session_state.page == 'wardrobe':
         cols = st.columns(3)
         earrings = [
             ("Goldwork Earrings", "static/images/Earrings21.png"),
-            ("Studs", "static/images/Eearrings22.png"),
+            ("Studs", "static/images/Earrings22.png"),
             ("Studs", "static/images/Earrings23.png"),
             ("Silver Work Earrings", "static/images/Earrings24.png"),
             ("Goldwork Earrings", "static/images/Earrings25.png"),
@@ -477,9 +470,9 @@ elif st.session_state.page == 'wardrobe':
         
         for i, (name, path) in enumerate(earrings):
             with cols[i % 3]:
-                # Create placeholder if image doesn't exist
+                
                 if not os.path.exists(path):
-                    # Create a placeholder image
+                    
                     placeholder = np.zeros((200, 200, 3), dtype=np.uint8)
                     cv2.rectangle(placeholder, (50, 50), (150, 150), (255, 0, 255), -1)
                     cv2.putText(placeholder, name, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
@@ -493,7 +486,7 @@ elif st.session_state.page == 'wardrobe':
                     st.rerun()
     
     with tab3:
-        st.markdown('<h2 class="category-header">Tiaras</h2>', unsafe_allow_html=True)
+        st.markdown('<h2 class="category-header">Hats & Tiaras</h2>', unsafe_allow_html=True)
         cols = st.columns(3)
         tiaras = [
             ("Tiara", "static/images/Tiaras31.png"),
@@ -506,9 +499,9 @@ elif st.session_state.page == 'wardrobe':
         
         for i, (name, path) in enumerate(tiaras):
             with cols[i % 3]:
-                # Create placeholder if image doesn't exist
+                
                 if not os.path.exists(path):
-                    # Create a placeholder image
+                   
                     placeholder = np.zeros((200, 200, 3), dtype=np.uint8)
                     cv2.rectangle(placeholder, (50, 50), (150, 150), (255, 255, 0), -1)
                     cv2.putText(placeholder, name, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
@@ -533,15 +526,20 @@ elif st.session_state.page == 'wardrobe':
             ("White and Black Full Sleeves", "static/images/Tops49.png"),
         ]
         
+       
+        for item in uploaded_items:
+            if item['category'].lower() == 't-shirt':
+                tshirts.append((item['name'], item['path']))
+                
         for i, (name, path) in enumerate(tshirts):
             with cols[i % 3]:
-                # Create placeholder if image doesn't exist
+                
                 if not os.path.exists(path):
-                    # Create a placeholder image
+                    
                     placeholder = np.zeros((200, 200, 3), dtype=np.uint8)
                     cv2.rectangle(placeholder, (50, 50), (150, 150), (0, 0, 255), -1)
                     cv2.putText(placeholder, name, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                    st.image(placeholder, caption=name, use_column_width=True)
+                    st.image(placeholder, caption=name, use_container_width=True)
                 else:
                     st.image(path, caption=name, use_container_width=True)
                 
@@ -551,8 +549,8 @@ elif st.session_state.page == 'wardrobe':
                     st.rerun()
     
     with tab5:
-        st.markdown('<h2 class="category-header">Goggles</h2>', unsafe_allow_html=True)
-        cols = st.columns(3)
+        st.markdown('<h2 class="category-header">Glasses</h2>', unsafe_allow_html=True)
+        cols = st.columns(2)
         goggles = [
             ("Goggles", "static/images/Sunglasses61.png"),
             ("Sun Glasses", "static/images/Sunglasses62.png"),
@@ -563,18 +561,19 @@ elif st.session_state.page == 'wardrobe':
         ]
         
         for i, (name, path) in enumerate(goggles):
-            with cols[i % 3]:
-                # Create placeholder if image doesn't exist
+            with cols[i % 2]:
+                
                 if not os.path.exists(path):
-                    # Create a placeholder image
+                    
                     placeholder = np.zeros((200, 200, 3), dtype=np.uint8)
-                    cv2.rectangle(placeholder, (50, 50), (150, 150), (0, 255, 0), -1)
+                    cv2.rectangle(placeholder, (50, 50), (150, 150), (0, 0, 255), -1)
                     cv2.putText(placeholder, name, (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
                     st.image(placeholder, caption=name, use_container_width=True)
                 else:
                     st.image(path, caption=name, use_container_width=True)
                 
-                if st.button(f"Try {name}", key=f"goggle_try_{name}_{i}"):
+                if st.button(f"Try {name}", key=f"goggle_try_{name}_{i}_{st.session_state.page}"):
+
                     st.session_state.selected_item = path
                     st.session_state.page = 'tryon'
                     st.rerun()
@@ -582,235 +581,191 @@ elif st.session_state.page == 'wardrobe':
     with tab6:
         st.markdown('<h2 class="category-header">My Uploaded Items</h2>', unsafe_allow_html=True)
         
-        if not st.session_state.uploaded_items:
+        if not uploaded_items:
             st.info("You haven't uploaded any items yet. Use the upload form in the sidebar to add items to your wardrobe!")
         else:
             cols = st.columns(3)
-            for i, item in enumerate(st.session_state.uploaded_items):
+            for i, item in enumerate(uploaded_items):
                 with cols[i % 3]:
                     try:
                         if os.path.exists(item['path']):
                             st.image(item['path'], use_container_width=True)
                             st.write(f"**{item['name']}**")
                             st.caption(f"Category: {item['category']}")
-                            
-                            # Try on button
-                            if st.button(f"👗 Try on {item['name']}", 
-                                       key=f"uploaded_try_{item['category']}_{i}_{item['name'].replace(' ', '_')}"):
+                            st.caption(f"Added: {item['date_added']}")
+
+                           
+                            if st.button(f"Try on {item['name']}", key=f"uploaded_try_{item['category']}_{i}_{item['name'].replace(' ', '_')}"):
                                 st.session_state.selected_item = item['path']
                                 st.session_state.page = 'tryon'
                                 st.rerun()
+
                             
-                            # Delete button
-                            if st.button(f"🗑️ Delete {item['name']}", 
-                                       key=f"delete_{item['category']}_{i}_{item['name'].replace(' ', '_')}"):
-                                if delete_uploaded_file(item['path']):
-                                    st.session_state.uploaded_items = [x for x in st.session_state.uploaded_items if x['id'] != item['id']]
-                                    st.success(f"Successfully deleted {item['name']}")
-                                    st.rerun()
-                                else:
-                                    st.error("Failed to delete the item. Please try again.")
+                            if st.button(f"🗑️ Delete {item['name']}", key=f"delete_{i}_{item['name'].replace(' ', '_')}"):
+                                file_path = item['path']
+
+                                
+                                uploaded_items.pop(i)
+
+                                
+                                with open(uploaded_items_file, 'w') as f:
+                                    json.dump(uploaded_items, f)
+
+                                
+                                if os.path.exists(file_path):
+                                    os.remove(file_path)
+
+                                st.success(f"🗑️ Deleted {item['name']} successfully!")
+                                st.rerun()
                         else:
                             st.warning(f"Could not find image: {item['path']}")
                     except Exception as e:
                         st.error(f"Error loading {item.get('name', 'item')}: {str(e)}")
 
-# Try-On Page
+        
+
+
+
 elif st.session_state.page == 'tryon':
     st.markdown('<h1 class="main-header">Virtual Try-On</h1>', unsafe_allow_html=True)
     st.markdown('<p class="subtitle">Use your webcam to try on virtual items in real-time</p>', unsafe_allow_html=True)
-    
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.subheader("📷 Camera Feed")
-        
-        # Camera input with error handling
-        try:
-            camera_input = st.camera_input("Take a photo to try on items", key="camera_input")
-            
-            if camera_input is not None:
-                # Convert the uploaded image to OpenCV format
-                image = Image.open(camera_input)
-                frame = np.array(image)
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                
-                # Get selected item or default
-                selected_item = st.session_state.selected_item if st.session_state.selected_item else 'static/images/Necklace11.png'
-                
-                # Process the frame with virtual try-on
-                try:
-                    processed_frame = process_frame(frame, selected_item)
-                    
-                    if processed_frame is not None:
-                        # Convert back to RGB for display
-                        processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
-                        st.image(processed_frame_rgb, caption="Virtual Try-On Result", use_container_width=True)
-                        st.session_state.processed_image = processed_frame_rgb
-                    else:
-                        st.image(frame, caption="Original Photo", use_container_width=True)
-                        st.warning("No face detected. Please ensure your face is clearly visible in the photo.")
-                except Exception as e:
-                    st.error(f"Error processing image: {str(e)}")
-                    st.image(frame, caption="Original Photo", use_container_width=True)
-                    
-        except Exception as e:
-            st.error("Error accessing webcam. Please ensure your camera is connected and permissions are granted.")
-            st.info("As an alternative, you can upload an image below.")
-            uploaded_file = st.file_uploader("Or upload an image", type=["jpg", "jpeg", "png"], key="file_uploader")
-            if uploaded_file is not None:
-                image = Image.open(uploaded_file)
-                frame = np.array(image)
-                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                
-                # Get selected item or default
-                selected_item = st.session_state.selected_item if st.session_state.selected_item else 'static/images/Necklace11.png'
-                
-                # Process the frame with virtual try-on
-                try:
-                    processed_frame = process_frame(frame, selected_item)
-                    
-                    if processed_frame is not None:
-                        # Convert back to RGB for display
-                        processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
-                        st.image(processed_frame_rgb, caption="Virtual Try-On Result", use_container_width=True)
-                        st.session_state.processed_image = processed_frame_rgb
-                    else:
-                        st.image(frame, caption="Original Photo", use_container_width=True)
-                        st.warning("No face detected. Please ensure your face is clearly visible in the photo.")
-                except Exception as e:
-                    st.error(f"Error processing image: {str(e)}")
-                    st.image(frame, caption="Original Photo", use_container_width=True)
-    
-    with col2:
-        st.subheader("👔 Select Item")
-        
-        # Base item categories
-        item_categories = {
-            "Necklaces": [
-                ("Silver Necklace", "static/images/Necklace11.png"),
-                ("Gold Necklace", "static/images/Necklace12.png"),
-                ("Thread Necklace", "static/images/Necklace15.png"),
-            ],
-            "Earrings": [
-                ("Goldwork Earrings", "static/images/Earrings21.png"),
-                ("Studs", "static/images/Earrings22.png"),
-                ("Silver Work Earrings", "static/images/Earrings24.png"),
-            ],
-            "Tiaras": [
-                ("Tiara", "static/images/Tiaras31.png"),
-                ("Tiara", "static/images/Tiaras32.png"),
-                ("Tiara", "static/images/Tiaras33.png"),
-            ],
-            "Goggles": [
-                ("Goggles", "static/images/Sunglasses61.png"),
-                ("Sun Glasses", "static/images/Sunglasses62.png"),
-                ("Spectacles", "static/images/Sunglasses63.png"),
-            ],
-            "Tops": [
-                ("Orange T-Shirt", "static/images/Tops41.png"),
-                ("Pink T-Shirt", "static/images/Tops42.png"),
-                ("White T-Shirt", "static/images/Tops43.png")
-            ]
-        }
-        
-        # Add uploaded items to their respective categories
-        for category in ["necklaces", "earrings", "tiaras", "goggles", "tops"]:
-            for item in st.session_state.uploaded_items:
-                if item['category'].lower() == category:
-                    category_name = category.capitalize()
-                    if category_name not in item_categories:
-                        item_categories[category_name] = []
-                    item_categories[category_name].append((item['name'], item['path']))
-        
-        for category, items in item_categories.items():
-            st.write(f"**{category}**")
-            for name, path in items:
-                col_img, col_btn = st.columns([1, 2])
-                with col_img:
-                    # Create placeholder if image doesn't exist
-                    if not os.path.exists(path):
-                        # Create a placeholder image
-                        placeholder = np.zeros((60, 60, 3), dtype=np.uint8)
-                        if "necklace" in category.lower():
-                            color = (0, 255, 255)
-                        elif "earring" in category.lower():
-                            color = (255, 0, 255)
-                        elif "tiara" in category.lower():
-                            color = (255, 255, 0)
-                        elif "goggle" in category.lower():
-                            color = (0, 255, 0)
-                        else:
-                            color = (0, 0, 255)
-                        cv2.rectangle(placeholder, (10, 10), (50, 50), color, -1)
-                        st.image(placeholder, width=60)
-                    else:
-                        st.image(path, width=60)
-                with col_btn:
-                    if st.button(f"Select {name}", key=f"select_{path}"):
-                        st.session_state.selected_item = path
-                        st.session_state.processed_image = None  # Force reprocessing
-                        st.success(f"Selected: {name}")
-        
-        # Shopping Cart
-        st.subheader("🛒 Shopping Cart")
-        
-        if not st.session_state.cart_items:
-            st.info("Your cart is empty. Add items from above.")
-        else:
-            for i, item in enumerate(st.session_state.cart_items):
-                col1, col2, col3 = st.columns([1, 3, 1])
-                with col1:
-                    st.image(item['path'], width=50)
-                with col2:
-                    st.write(f"**{item['name']}**")
-                with col3:
-                    if st.button("❌", key=f"remove_{item['id']}"):
-                        st.session_state.cart_items = [x for x in st.session_state.cart_items if x['id'] != item['id']]
-                        st.rerun()
-            
-            # Try on all items button
-            if st.button("👕 Try On All Items"):
-                st.session_state.current_item = None  # Reset current item
-                st.rerun()
-        
-        # Current selection for single item try-on
-        st.subheader("👔 Quick Try-On")
-        if st.session_state.selected_item is not None:
-            st.write("**Currently Selected:**")
-            try:
-                filename = st.session_state.selected_item.split('/')[-1]
-                st.write(filename)
-            except:
-                st.write(st.session_state.selected_item)
-                
-            if st.button("Try On This Item"):
-                st.session_state.current_item = st.session_state.selected_item
-                st.session_state.processed_image = None  # Force reprocessing
-                st.rerun()
-        else:
-            st.write("**No item selected**")
-        
-        # Download button for processed image
-        if st.session_state.processed_image is not None:
-            st.subheader("📥 Download Your Try-On")
-            # Convert to PIL Image for download
-            result_pil = Image.fromarray(st.session_state.processed_image)
-            
-            # Save to temporary file
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
-                result_pil.save(tmp_file.name)
-                
-                # Create download button
-                with open(tmp_file.name, "rb") as file:
-                    btn = st.download_button(
-                        label="Download Result",
-                        data=file,
-                        file_name="virtual_try_on_result.png",
-                        mime="image/png"
-                    )
 
-# About Page
+    
+    st.subheader("📷 Camera Feed")
+    frame = None
+    try:
+        camera_input = st.camera_input("Take a photo to try on items")
+        if camera_input is not None:
+            image = Image.open(camera_input)
+            frame = np.array(image)
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+    except Exception:
+        st.error(" Error accessing webcam.")
+        uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
+        if uploaded_file is not None:
+            image = Image.open(uploaded_file)
+            frame = np.array(image)
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+    
+    base_categories = {
+        "T-shirts": [
+            ("Orange T-Shirt", "static/images/Tops41.png"),
+            ("Pink T-Shirt", "static/images/Tops42.png"),
+            ("White T-Shirt", "static/images/Tops43.png")
+        ],
+        "Necklaces": [
+            ("Silver Necklace", "static/images/Necklace11.png"),
+            ("Gold Necklace", "static/images/Necklace12.png"),
+            ("Thread Necklace", "static/images/Necklace15.png"),
+        ],
+        "Earrings": [
+            ("Goldwork Earrings", "static/images/Earrings21.png"),
+            ("Studs", "static/images/Earrings22.png"),
+            ("Silver Work Earrings", "static/images/Earrings24.png"),
+        ],
+        "Tiaras": [
+            ("Tiara1", "static/images/Tiaras31.png"),
+            ("Tiara2", "static/images/Tiaras32.png"),
+            ("Tiara3", "static/images/Tiaras33.png"),
+        ],
+        "Goggles": [
+            ("Goggles", "static/images/Sunglasses61.png"),
+            ("Sun Glasses", "static/images/Sunglasses62.png"),
+            ("Spectacles", "static/images/Sunglasses63.png"),
+        ],
+        "Hats": []  
+    }
+
+    uploaded_items_file = "uploaded_items.json"
+    if os.path.exists(uploaded_items_file):
+        with open(uploaded_items_file, "r") as f:
+            uploaded_items = json.load(f)
+    else:
+        uploaded_items = []
+
+    category_map = {
+        "T-shirt": "T-shirts",
+        "Necklace": "Necklaces",
+        "Earring": "Earrings",
+        "Tiara": "Tiaras",
+        "Goggle": "Goggles",
+        "Hat": "Hats"
+    }
+
+    item_categories = {cat: items.copy() for cat, items in base_categories.items()}
+    for item in uploaded_items:
+        mapped_cat = category_map.get(item["category"], None)
+        if mapped_cat:
+            item_categories[mapped_cat].append((item["name"], item["path"]))
+
+   
+    if frame is not None:
+        selected_item = st.session_state.get('selected_item', 'static/images/Necklace11.png')
+        try:
+            processed_frame = process_frame(frame, selected_item)
+            if processed_frame is not None:
+                processed_frame_rgb = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
+                st.image(processed_frame_rgb, caption="Virtual Try-On Result", use_container_width=True)
+                st.session_state.processed_image = processed_frame_rgb
+            else:
+                st.image(frame, caption="Original Photo", use_container_width=True)
+                st.warning("No face detected.")
+        except Exception as e:
+            st.error(f" Error processing image: {str(e)}")
+            st.image(frame, caption="Original Photo", use_container_width=True)
+
+    
+    st.subheader("👔 Select Item")
+    col_left, col_right = st.columns(2)
+
+    with col_left:
+        for category in ["T-shirts", "Necklaces", "Earrings"]:
+            if category in item_categories:
+                st.write(f"**{category}**")
+                for i, (name, path) in enumerate(item_categories[category]):
+                    c1, c2 = st.columns([1, 2])
+                    with c1:
+                        st.image(path if os.path.exists(path) else np.zeros((60, 60, 3), dtype=np.uint8), width=60)
+                    with c2:
+                        if st.button(f"Select {name}", key=f"select_{category}_{i}"):
+                            st.session_state.selected_item = path
+                            st.success(f"Selected: {name}")
+
+    with col_right:
+        for category in ["Goggles", "Tiaras", "Hats"]:
+            if category in item_categories:
+                st.write(f"**{category}**")
+                for i, (name, path) in enumerate(item_categories[category]):
+                    c1, c2 = st.columns([1, 2])
+                    with c1:
+                        st.image(path if os.path.exists(path) else np.zeros((60, 60, 3), dtype=np.uint8), width=60)
+                    with c2:
+                        if st.button(f"Select {name}", key=f"select_{category}_{i}"):
+                            st.session_state.selected_item = path
+                            st.success(f"Selected: {name}")
+
+    
+    if st.session_state.get("processed_image") is not None:
+        st.subheader("📥 Download Your Try-On")
+        result_pil = Image.fromarray(st.session_state.processed_image)
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as tmp_file:
+            result_pil.save(tmp_file.name)
+            with open(tmp_file.name, "rb") as file:
+                st.download_button(
+                    label="Download Result",
+                    data=file,
+                    file_name="virtual_try_on_result.png",
+                    mime="image/png",
+                    key=f"download_btn_{datetime.now().timestamp()}"
+                )
+
+
+
+
+
+
+
 elif st.session_state.page == 'about':
     st.markdown('<h1 class="main-header">About VFIT</h1>', unsafe_allow_html=True)
     st.markdown('<p class="subtitle">AI-powered virtual try-on technology</p>', unsafe_allow_html=True)
@@ -840,9 +795,6 @@ elif st.session_state.page == 'about':
     3. **Use Camera**: Take a photo or use live camera feed
     4. **See Results**: View yourself wearing the virtual items instantly
     
-    ---
-    
-    Made with ❤️ using Streamlit and OpenCV
     """)
 
 # Footer
